@@ -720,8 +720,10 @@ package "R5-04 OPERATOR MAINTENANCE — integrated source candidate\nEPHEMERAL H
   folder "Temporary native historical view\nUID0 directories0700 / leaves0600\noriginal worker material retained" as p4_native_base_view
   folder "Lifecycle worker-secret staging\nENABLE / RECOVER only\nretained original; root-private copy" as p4_worker_secret
 }
-' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:955-972; scripts/ops/lib/owner-beta-paper-serving.py:277-333,418-483,664-727
+' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:955-972; scripts/ops/lib/owner-beta-paper-serving.py:295-331,473-534,722-794
 p4_host_lifecycle --> p4_serving_handoff : holds release lock; only the exact two consumers
+' evidence: scripts/ops/lib/owner-beta-paper-serving.py:92-188; scripts/ops/lib/owner-beta-paper-journal.py:1609-1620
+p4_serving_handoff --> paper_ops_journal : hash-chained serving phases under the original ENABLE
 ' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:286-290,451-456
 p4_host_lifecycle --> p4_worker_secret : stage the exact worker-role original only for financial verbs
 ' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:448-456,470; scripts/ops/lib/owner-beta-paper-operations.py:1582-1586
@@ -824,6 +826,8 @@ p5_inputs --> p5_verify_standalone : persisted-only verify without source BEGIN 
 p4_lifecycle_store --> p5_inputs : retain immutable history through existing paper_evidence projection; staging excluded
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2077-2133; crates/job-queue/src/owner_beta/paper/operations/protected/archive_lifecycle.rs:19-139,162-192; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:751-771
 p5_domains --> p5_lifecycle_consumer : historical queries and anchors;\nv2 joins original claim, Current and ARMED tail
+' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:1062-1068; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:1383-1416; crates/job-queue/src/owner_beta/paper/operations/protected/archive_serving.rs:254-367
+paper_ops_journal --> p5_inputs : retain the ENABLE originals and failed-start STOP
 note bottom of p5_native
   Source graph only. These helpers are ephemeral source constructs, not running or deployed services.
   Native, genuine C fixture, Root/PG, runtime and Owner acceptance remain OPEN; R5-04 remains OPEN.

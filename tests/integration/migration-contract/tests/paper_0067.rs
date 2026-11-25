@@ -3301,6 +3301,78 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         assert_eq!(wider_fence["current_state"], "DRAINING");
         assert_eq!(wider_fence["current_epoch"], 6);
 
+        // The host keeps the first backup's protected STOPPED head. SQL
+        // accepts a new generation from that exact still-DRAINING predecessor.
+        let retry_generation = Uuid::new_v4();
+        let mut retry = sql_operation_intent(account, retry_generation, Some(stopped_generation), 6);
+        retry["installation_id"] = json!(restored_installation);
+        retry["purpose"] = json!("BACKUP");
+        retry["scope"] = json!("COMBINED_BACKUP");
+        let retry_key = format!("{retry_generation}:begin");
+        denied(
+            sqlx::query_scalar::<_, Value>("SELECT begin_owner_beta_paper_operation_v1(6,$1,$2)")
+                .bind(&retry)
+                .bind(&retry_key)
+                .fetch_one(&caller)
+                .await,
+            "23514",
+        );
+        retry["predecessor_generation"] = json!(backup_generation);
+        let retry_fenced: Value =
+            sqlx::query_scalar("SELECT begin_owner_beta_paper_operation_v1(6,$1,$2)")
+                .bind(&retry)
+                .bind(&retry_key)
+                .fetch_one(&caller)
+                .await?;
+        assert_eq!(retry_fenced["control_epoch"], 7);
+        let retry_begin = exact_request(
+            "BEGIN",
+            Some(account),
+            json!({"expected_epoch":6,"intent_canonical":exact_json(&retry),"request_key":retry_key}),
+        );
+        assert_exact_receipt(&db, &retry_begin, &retry_fenced).await?;
+        let reconcile_key = format!("{retry_generation}:reconcile:1");
+        let reconciled_retry: Value =
+            sqlx::query_scalar("SELECT reconcile_owner_beta_paper_operation_v1($1,7,$2,$3)")
+                .bind(retry_generation)
+                .bind(&inventory)
+                .bind(&reconcile_key)
+                .fetch_one(&caller)
+                .await?;
+        assert_eq!(reconciled_retry["outcome"], "OK");
+        let observed_ns: i64 = sqlx::query_scalar(
+            "SELECT floor(extract(epoch FROM clock_timestamp())*1000000000)::bigint",
+        )
+        .fetch_one(&db.owner)
+        .await?;
+        let retry_off_key = format!("{retry_generation}:off");
+        let retry_receipt = json!({
+            "schema":"owner-beta-paper-drain-receipt-v1","installation_id":restored_installation,
+            "generation":retry_generation,"account_id":account,"request_key":retry_off_key,
+            "scope":"COMBINED_BACKUP","expected_epoch":6,"resulting_epoch":7,
+            "intent_sha256":retry_fenced["data"]["intent_sha256"],"stage_sha256":hash('c'),
+            "inventory_sha256":inventory,"reconciliation_sha256":reconciled_retry["data"]["summary_sha256"],
+            "observation_id":reconciled_retry["data"]["observation_id"],"release_manifest_sha256":hash('a'),
+            "boot_id":Uuid::new_v4(),
+            "observed":{"realtime_ns":observed_ns,"monotonic_ns":1,"boottime_ns":1}
+        });
+        let descendant_off: Value =
+            sqlx::query_scalar("SELECT transition_owner_beta_paper_v1(7,'OFF',$1,$2)")
+                .bind(&retry_receipt)
+                .bind(&retry_off_key)
+                .fetch_one(&caller)
+                .await?;
+        assert_eq!(descendant_off["outcome"], "OK");
+        assert_eq!(descendant_off["control_epoch"], 8);
+        assert_exact_transition(&db,account,7,"OFF",&retry_receipt,&retry_off_key,&descendant_off).await?;
+        for (original, epoch) in [(&original_stop,5),(&original_backup,6),(&retry_begin,7)] {
+            let read = exact_read(&caller,original).await?;
+            assert_eq!(read["status"],"COMMITTED");
+            assert_eq!(read["event_epoch"],epoch);
+            assert_eq!(read["current_state"],"OFF");
+            assert_eq!(read["current_epoch"],8);
+        }
+
         let mut down_tx = caller.begin().await?;
         sqlx::query("SAVEPOINT nonempty_down")
             .execute(&mut *down_tx)

@@ -3747,6 +3747,34 @@ def _completed_nonmaintenance(live, operation, account, current):
     live.revalidate()
 
 
+def _combined_backup_successor(ops, live, original, fence, successor, current):
+    """Authenticate an edge to the next BACKUP without changing its historical head."""
+    root, child = original._intent, successor._intent
+    _require(successor._bound and child["purpose"] == "BACKUP"
+             and child["scope"] == "COMBINED_BACKUP"
+             and child["predecessor_generation"] == original.generation
+             and child["installation_id"] == root["installation_id"]
+             and child["account_id"] == root["account_id"]
+             and child["release_manifest_sha256"] == root["release_manifest_sha256"]
+             and child["expected_epoch"] == child["local_epoch_floor"] == fence,
+             "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    head = successor._last[3]
+    if head["stage"] == "STOPPED":
+        # The ordinary pending loop checks this child's own immutable STOPPED
+        # evidence, current SQL readback and its unique successor or explicit
+        # restart selection. Every accepted edge increases the fenced epoch.
+        _require(head["control_epoch"] == fence + 1, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        return
+    _require(head["stage"] == "SNAPSHOT", "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    off = _numbered_stage(ops, successor, head["sequence"] - 1)
+    _require(off["stage"] == "OFF_COMMITTED"
+             and head["control_epoch"] == off["control_epoch"] == fence + 2
+             and ops.journal._next_action_sequence(successor._fd) == off["sequence"] - 1,
+             "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    _verify_restart_commit(live, successor, _numbered_stage(ops, successor, 1), 0, "begin", current)
+    _verify_restart_commit(live, successor, off, off["sequence"] - 2, "off", current)
+
+
 def _failed_start_predecessor(ops, live, pending, operations, current, selected):
     lifecycle = ops._load_local("owner_beta_paper_lifecycle", "owner-beta-paper-lifecycle.py")
     serving = lifecycle._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
@@ -3772,18 +3800,7 @@ def _failed_start_predecessor(ops, live, pending, operations, current, selected)
         head = serving.validate_attended_selection(lifecycle, live, enable_generation, original, current if not children else None)
         _verify_restart_commit(live, original, head, 0, "begin", current)
         if children:
-            child = children[0]
-            snapshot = child._last[3]
-            off = _numbered_stage(ops, child, snapshot["sequence"] - 1)
-            _require(child._bound and child._intent["purpose"] == "BACKUP"
-                     and child._intent["scope"] == "COMBINED_BACKUP"
-                     and child._intent["release_manifest_sha256"] == original._intent["release_manifest_sha256"]
-                     and child._intent["expected_epoch"] == head["control_epoch"]
-                     and snapshot["stage"] == "SNAPSHOT" and off["stage"] == "OFF_COMMITTED"
-                     and snapshot["control_epoch"] == off["control_epoch"] == head["control_epoch"] + 2,
-                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-            _verify_restart_commit(live, child, _numbered_stage(ops, child, 1), 0, "begin", current)
-            _verify_restart_commit(live, child, off, off["sequence"] - 2, "off", current)
+            _combined_backup_successor(ops, live, original, head["control_epoch"], children[0], current)
         elif selected == enable_generation:
             selected_stop = original.generation
     _require(selected is None or selected_stop is not None, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
@@ -3861,19 +3878,7 @@ def _backup_history(ops, live, operations, account, current, restart, *, failed_
             _require(current == (fence, "DRAINING") and root["release_manifest_sha256"] == live.manifest_sha256,
                      "PAPER_BACKUP_RESTART_PREDECESSOR")
         else:
-            successor = children[0]
-            child, snapshot = successor._intent, successor._last[3]
-            off_stage = _numbered_stage(ops, successor, snapshot["sequence"] - 1)
-            _require(successor._bound and child["purpose"] == "BACKUP" and child["scope"] == root["scope"]
-                     and child["installation_id"] == root["installation_id"]
-                     and child["release_manifest_sha256"] == root["release_manifest_sha256"]
-                     and child["expected_epoch"] == child["local_epoch_floor"] == fence
-                     and snapshot["stage"] == "SNAPSHOT" and off_stage["stage"] == "OFF_COMMITTED"
-                     and snapshot["control_epoch"] == off_stage["control_epoch"] == fence + 2
-                     and ops.journal._next_action_sequence(successor._fd) == off_stage["sequence"] - 1,
-                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-            _verify_restart_commit(live, successor, _numbered_stage(ops, successor, 1), 0, "begin", current)
-            _verify_restart_commit(live, successor, off_stage, off_stage["sequence"] - 2, "off", current)
+            _combined_backup_successor(ops, live, original, fence, children[0], current)
         _verify_restart_commit(live, original, fenced, 0, "begin", current)
     if restart is not None:
         _require(any(original.generation == restart[0] for original in pending),

@@ -82,14 +82,18 @@ STALE = "PAPER_SERVING_GENERATION"
 ATTEMPT_FIELDS = {"schema", "enable_generation", "account_id", "expected_epoch",
                   "release_manifest_sha256", "process_sha256", "prior_api_generation",
                   "prior_daily_generations", "prior_proxy_generation", "installed_env_sha256"}
+RECORD_SCHEMA = "owner-beta-paper-serving-record-v1"
+RECORD_FIELDS = {"schema", "root_intent_sha256", "phase", "prior_sha256", "value"}
+RECORD_PHASES = {"intent", "enabled", "creating", "created", "started", "not-started",
+                 "stop-intent", "failed", "reconciled", *SERVICES,
+                 *(prefix + service for prefix in ("clearing-", "cleared-") for service in SERVICES)}
 
 
 class Records:
-    """Append-only attempt evidence. A retained record cannot launch a service."""
-    def __init__(self, lifecycle, install_root):
-        self.lifecycle = lifecycle
-        self.tree = lifecycle.journal._Tree(install_root + "/" + lifecycle.STORE + "/queries")
-        self.root = self.tree.fd
+    """Descriptive originals inside the exact ENABLE operation, never query receipts."""
+    def __init__(self, lifecycle, install_root, lock):
+        self.lifecycle, self.install_root, self.lock = lifecycle, install_root, lock
+        self.tree = lifecycle.journal._Tree(install_root)
 
     def __enter__(self):
         return self
@@ -97,36 +101,87 @@ class Records:
     def __exit__(self, *_):
         self.tree.close()
 
-    def write(self, generation, name, value, *, create=False):
+    @contextlib.contextmanager
+    def _open(self, generation):
         journal = self.lifecycle.journal
         journal._uuid(generation)
         self.tree.revalidate()
-        if create:
-            os.mkdir(generation, 0o700, dir_fd=self.root)
-            os.fsync(self.root)
-        fd = journal._open_child(self.root, generation, 0o700)
-        try:
-            raw = journal._canonical(value)
-            journal._immutable(fd, name, raw, 0o400)
-            journal._check_named_dir(self.root, generation, fd)
-            self.lifecycle.require(journal._read_named(fd, name, 0o400, journal.MAX_SMALL) == raw,
-                                   "PAPER_SERVING_RECEIPT")
-        finally:
-            os.close(fd)
+        with journal.open_journal(self.install_root, self.lock) as owner:
+            with contextlib.closing(owner.open(generation)) as operation:
+                self.lifecycle.require(operation._bound and operation._intent["purpose"] == "ENABLE",
+                                       "PAPER_SERVING_RECEIPT")
+                yield operation
+                operation.revalidate()
         self.tree.revalidate()
 
+    def _originals(self, operation):
+        journal, require = self.lifecycle.journal, self.lifecycle.require
+        following = {}
+        with os.scandir(operation._fd) as entries:
+            for count, entry in enumerate(entries, 1):
+                require(count <= 128, "PAPER_SERVING_RECEIPT")
+                if not re.fullmatch(r"[0-9a-f]{64}\.json", entry.name):
+                    continue
+                raw = journal._read_named(operation._fd, entry.name, 0o400, journal.MAX_NATIVE_INDEX)
+                value = journal._json(raw, journal.MAX_NATIVE_INDEX)
+                schema = value.get("schema") if isinstance(value, dict) else None
+                if not isinstance(schema, str) or not schema.startswith("owner-beta-paper-serving-"):
+                    continue
+                require(len(raw) <= journal.MAX_SMALL and schema == RECORD_SCHEMA
+                        and set(value) == RECORD_FIELDS and value["root_intent_sha256"] == operation.intent_sha256
+                        and isinstance(value["phase"], str) and value["phase"] in RECORD_PHASES
+                        and isinstance(value["value"], dict),
+                        "PAPER_SERVING_RECEIPT")
+                digest = "sha256:" + entry.name[:-5]
+                journal._hash(value["prior_sha256"], nullable=True)
+                require(journal._sha(raw) == digest and value["prior_sha256"] not in following,
+                        "PAPER_SERVING_RECEIPT")
+                following[value["prior_sha256"]] = digest, value
+                require(len(following) <= len(RECORD_PHASES), "PAPER_SERVING_RECEIPT")
+        values, tail = {}, None
+        while tail in following:
+            tail, original = following.pop(tail)
+            phase, value = original["phase"], original["value"]
+            require(phase not in values and (phase == "intent") == (not values),
+                    "PAPER_SERVING_RECEIPT")
+            if phase == "intent":
+                root = operation._intent
+                require(set(value) == ATTEMPT_FIELDS and value["schema"] == "owner-beta-paper-serving-intent-v1"
+                        and value["enable_generation"] == operation.generation
+                        and value["account_id"] == root["account_id"]
+                        and value["expected_epoch"] == root["expected_epoch"]
+                        and value["release_manifest_sha256"] == root["release_manifest_sha256"]
+                        and value["process_sha256"] == root["artifact_sha256"], "PAPER_SERVING_RECEIPT")
+            values[phase] = value
+        require(not following, "PAPER_SERVING_RECEIPT")
+        return values, tail
+
+    def _phase(self, name):
+        phase = name.removeprefix("serving-").removesuffix(".json")
+        self.lifecycle.require(phase in RECORD_PHASES and name == "serving-" + phase + ".json",
+                               "PAPER_SERVING_RECEIPT")
+        return phase
+
+    def write(self, generation, name, value, *, create=False):
+        journal, require = self.lifecycle.journal, self.lifecycle.require
+        phase = self._phase(name)
+        with self._open(generation) as operation:
+            records, tail = self._originals(operation)
+            require(create == (phase == "intent") and (records or create), "PAPER_SERVING_RECEIPT")
+            if phase in records:
+                require(records[phase] == value, "PAPER_SERVING_RECEIPT")
+                return
+            raw = journal._canonical(dict(schema=RECORD_SCHEMA, root_intent_sha256=operation.intent_sha256,
+                                          phase=phase, prior_sha256=tail, value=value))
+            operation._store_original(raw, journal._sha(raw), journal.MAX_SMALL)
+
     def read(self, generation, name):
-        journal = self.lifecycle.journal
-        journal._uuid(generation)
-        self.tree.revalidate()
-        fd = journal._open_child(self.root, generation, 0o700)
-        try:
-            raw = journal._read_named(fd, name, 0o400, journal.MAX_SMALL)
-            journal._check_named_dir(self.root, generation, fd)
-            self.tree.revalidate()
-            return journal._json(raw, journal.MAX_SMALL)
-        finally:
-            os.close(fd)
+        phase = self._phase(name)
+        with self._open(generation) as operation:
+            records, _ = self._originals(operation)
+        if phase not in records:
+            raise FileNotFoundError
+        return records[phase]
 
     def optional(self, generation, name):
         try:
@@ -638,8 +693,11 @@ def reconcile_attempt(lifecycle, live, lock, records, dispatch):
     intent = records.optional(generation, "serving-intent.json")
     if intent is None:
         return
+    if records.optional(generation, "serving-not-started.json") is not None:
+        return
     if (records.optional(generation, "serving-started.json") is not None
-            or records.optional(generation, "serving-not-started.json") is not None):
+            and records.optional(generation, "serving-failed.json") is None
+            and records.optional(generation, "serving-stop-intent.json") is None):
         return
     _check_attempt(lifecycle, live, dispatch, intent)
     outcome = {"state":"UNKNOWN","fence":None,"enable_generation":generation}
@@ -669,7 +727,7 @@ def serve(lifecycle, context, lock, caller_key, binding_path):
     attempted = None
     activation = None
     install_root = str(Path(context.release).parent.parent)
-    with Records(lifecycle, install_root) as records:
+    with Records(lifecycle, install_root, lock) as records:
         def planned(generation, account, epoch, proposal):
             nonlocal attempted
             records.write(generation, "serving-intent.json",
@@ -743,7 +801,7 @@ def validate_attended_selection(lifecycle, live, enable_generation, stop, curren
     require = lifecycle.require
     root, head = stop._intent, stop._last[3]
     key = "serving-failure:" + enable_generation
-    with Records(lifecycle, live.install_root) as records:
+    with Records(lifecycle, live.install_root, live.lock_fd) as records:
         intent = records.read(enable_generation, "serving-intent.json")
         failed = records.optional(enable_generation, "serving-reconciled.json")
         if failed is None:
@@ -778,7 +836,7 @@ def validate_attended_selection(lifecycle, live, enable_generation, stop, curren
 def clear_unstarted(lifecycle, live, enable_generation):
     """Remove only an exact never-started member of this explicitly attended attempt."""
     require, ops = lifecycle.require, lifecycle.ops
-    with Records(lifecycle, live.install_root) as records:
+    with Records(lifecycle, live.install_root, live.lock_fd) as records:
         intent = records.read(enable_generation, "serving-intent.json")
         bound = records.optional(enable_generation, "serving-creating.json")
         created = records.optional(enable_generation, "serving-created.json")

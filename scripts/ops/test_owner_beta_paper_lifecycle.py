@@ -482,7 +482,7 @@ class ServingHandoffTests(unittest.TestCase):
         self.root = "/isolated/install"
         self.context = types.SimpleNamespace(release=self.root + "/releases/" + C)
         self.live = types.SimpleNamespace(context=self.context, install_root=self.root, manifest_sha256=H,
-            commit=C, verified=types.SimpleNamespace(), revalidate=mock.Mock(), _env_bytes=b"fixture env")
+            commit=C, lock_fd=7, verified=types.SimpleNamespace(), revalidate=mock.Mock(), _env_bytes=b"fixture env")
         self.activation = self.module.Activation(G, A, 1, E, H, ops._digest(b"proposal"))
         self.live.verified.process_sha256 = self.activation.process
         self.request = ops._canonical(dict(schema="owner-beta-paper-exact-request-v1",kind="TRANSITION",
@@ -681,6 +681,68 @@ class ServingHandoffTests(unittest.TestCase):
              self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_GENERATION"):
             self.module.clear_unstarted(m,self.live,G)
         self.live.docker.call.assert_not_called()
+
+    def test_attended_stopped_child_requires_ordinary_exact_restart_then_accepts_completed_descendant(self):
+        backup = m._load("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        child_id = "00000000-0000-4000-8000-000000000601"
+        grandchild_id = "00000000-0000-4000-8000-000000000602"
+        stop = types.SimpleNamespace(generation=I, _fd=9, _bound=True, intent_sha256=H,
+            _journal=types.SimpleNamespace(installation_id=I, _callers=8, _scan_callers=mock.Mock()),
+            _intent=dict(installation_id=I, purpose="STOP", scope="PAPER_STOP", account_id=A,
+                         expected_epoch=1, local_epoch_floor=1, predecessor_generation=None,
+                         release_manifest_sha256=H),
+            revalidate=mock.Mock(return_value="FENCED"))
+        head = dict(sequence=1, stage="FENCED", event_id=E, control_epoch=2)
+        stop._last = (1,H,"FENCED",head)
+        self.files["serving-intent.json"] = self.intent
+        self.files["serving-failed.json"] = {"state":"FENCED_DRAINING","enable_generation":G,
+                                             "fence":{"generation":I,"event_id":E,"epoch":2}}
+        self.records.read.side_effect = lambda _id,name: self.files[name]
+        root = dict(stop._intent, purpose="BACKUP", scope="COMBINED_BACKUP")
+        stopped = dict(head, sequence=2, stage="STOPPED", control_epoch=3)
+        child = types.SimpleNamespace(generation=child_id, _fd=10, _bound=True, _journal=stop._journal,
+            revalidate=mock.Mock(return_value="STOPPED"), _last=(2,H,"STOPPED",stopped),
+            _intent=dict(root, expected_epoch=2, local_epoch_floor=2, predecessor_generation=I))
+        snapshot = dict(head, generation=grandchild_id, installation_id=I, account_id=A,
+                        sequence=5, stage="SNAPSHOT", control_epoch=5, artifact_sha256=H)
+        grandchild = types.SimpleNamespace(generation=grandchild_id, _fd=11, _bound=True,
+            revalidate=mock.Mock(return_value="SNAPSHOT"), _last=(5,H,"SNAPSHOT",snapshot),
+            read_original=mock.Mock(return_value=ops._canonical(
+                dict(snapshot,schema="owner-beta-paper-archive-v1"))),
+            _intent=dict(root, expected_epoch=3, local_epoch_floor=3, predecessor_generation=child_id),
+            intent_sha256=H)
+        stages = {(child._fd,1):dict(head,control_epoch=3),
+                  (grandchild._fd,1):dict(head,control_epoch=4),
+                  (grandchild._fd,4):dict(snapshot,sequence=4,stage="OFF_COMMITTED")}
+        called = ops._canonical(dict(caller_key="serving-failure:"+G,generation=I,account_id=A,
+                                    root_intent_sha256=H))
+        def retained(_fd, name, *_):
+            if name == "stop-caller":
+                return called
+            raise FileNotFoundError
+        with mock.patch.object(backup,"_verify_restart_commit") as readback, \
+             mock.patch.object(backup,"_stopped_originals") as stopped_proof, \
+             mock.patch.object(backup,"_numbered_stage",side_effect=lambda _ops,op,n:stages[(op._fd,n)]), \
+             mock.patch.object(j,"_next_action_sequence",side_effect=lambda fd:{10:1,11:3}[fd]), \
+             mock.patch.object(j,"_caller_name",side_effect=lambda _i,_a,key:(
+                 "stop-caller" if key.startswith("serving-failure:") else "restart-caller")), \
+             mock.patch.object(j,"_validate_caller",side_effect=lambda data,_id:json.loads(data)), \
+             mock.patch.object(j,"_read_named",side_effect=retained), \
+             mock.patch.object(backup.os,"listdir",return_value=["stop-caller"]):
+            with self.assertRaisesRegex(backup.PaperBackupError,"PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED"):
+                backup._backup_history(ops,self.live,[stop,child],A,(3,"DRAINING"),None)
+            self.assertEqual(backup._backup_history(ops,self.live,[stop,child],A,(3,"DRAINING"),
+                             (child_id,"exact-fresh-copy")), ({I,child_id},None))
+            stopped_proof.assert_called_once_with(ops, child, stopped)
+            readback.assert_any_call(self.live,stop,head,0,"begin",(3,"DRAINING"))
+            readback.assert_any_call(self.live,child,stages[(child._fd,1)],0,"begin",(3,"DRAINING"))
+            self.assertEqual(backup._backup_history(ops,self.live,[stop,child,grandchild],A,(5,"OFF"),None),
+                             ({I,child_id,grandchild_id},None))
+            readback.assert_any_call(self.live,grandchild,stages[(grandchild._fd,4)],2,"off",(5,"OFF"))
+            self.assertEqual(child._last[3],stopped)
+            grandchild._intent["local_epoch_floor"] = 4
+            with self.assertRaisesRegex(backup.PaperBackupError,"PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED"):
+                backup._backup_history(ops,self.live,[stop,child,grandchild],A,(5,"OFF"),None)
 
 
 

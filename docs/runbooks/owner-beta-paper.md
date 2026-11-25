@@ -197,9 +197,20 @@ The pinned reverse proxy resolves the fixed Compose API hostname after replaceme
 The operator verifies the same proxy generation and a local credential-free API
 response before and after the handoff. There is no proxy restart in this path.
 
+With the exact reverse-proxy image already cached under its digest from
+`deploy/compose/compose.yml`, the local Docker fixture checks routing across
+an API replacement on a new address. It uses an isolated internal network, a
+disposable certificate, no published port, and no image pull.
+
+```bash
+python3 -B deploy/nginx/api-replacement-self-test.py
+```
+
 A partial start immediately attempts the existing Paper STOP/BEGIN fence and
 independent readback. `FENCED_DRAINING` means the database fence is proved and
-writer drain is pending. `DRAINING_JOURNAL_INCOMPLETE` means an original SQL fence
+writer drain is pending. The fence blocks new economic actions and rejects
+stale epochs. Current-epoch scan, wait and maintenance bookkeeping can still
+run under their existing guards. `DRAINING_JOURNAL_INCOMPLETE` means an original SQL fence
 has been found but the protected continuation is incomplete. `UNKNOWN` requires
 checking the exact original dispatch before making any further change. A lost
 host process cannot fence while it is down. Re-enter the same caller key to
@@ -218,6 +229,11 @@ through the existing combined scope inventory and drain. The encrypted set
 must pass isolated restore, and restoring the original cohort is a separate
 attended decision. A fence alone cannot be reported as OFF.
 
+The backup retains the original serving phase chain as hash-named files under
+the original ENABLE in `.owner-beta-paper/operations/`. Native intake matches
+these records to that ENABLE and any failed-start STOP. Isolated restore
+preserves the originals as historical evidence.
+
 The native ENABLE gate remains closed pending the real §9.5 evidence. Public
 fixtures can check the host controller without activating Paper.
 
@@ -230,6 +246,10 @@ the backup controller can begin a linked generation and observe writers again.
 This requires the same boot and installed release, the original committed
 BEGIN, and fresh observations matching the original terminal writers. A later
 action, partial handoff or unknown commit needs separate investigation.
+After an attended failed-start backup reaches `STOPPED`, use this ordinary
+restart for that backup generation. The initial Paper STOP and every stopped
+backup generation retain their original terminal stages. A subsequent backup
+validates the recorded links and the descendant that committed OFF and SNAPSHOT.
 
 During an authorized attended Paper backup, use the original protected backup
 configuration and the maintained tool pinned to the current application:
