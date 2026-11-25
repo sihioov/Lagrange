@@ -18,7 +18,7 @@
 '   existing Policy job -> pure private native caller/CLI tests; no Source runtime or official archive provenance is implied.
 ' evidence: .github/workflows/ci.yml:83-84; scripts/ops/test_owner_beta_paper_native_source.py:24-45; scripts/ops/test_owner_beta_paper_native_source_cli.py:13-91
 ' General DB/SQL uses 90 minutes; the separate required cold Paper image/G2 job uses 180 minutes. Root preflight exercises owned PG18 setup and disposal.
-' evidence: .github/workflows/ci.yml:1283-1304; .github/workflows/ci.yml:1363-1371
+' evidence: .github/workflows/ci.yml:803-818,1298-1308,1368-1378,1670-1689
 ' Existing hosted dependency installs -> fixed mirror-list helper; package pins and required checks remain intact.
 ' evidence: .github/workflows/ci.yml:376; .github/workflows/ci.yml:926; scripts/ci/configure_ubuntu_apt_mirrors.py:310-333
 ' Existing Policy unittest command -> pure mirror parser/filesystem and caller-order checks; endpoint reachability is unverified.
@@ -36,7 +36,7 @@
 ' evidence: .github/workflows/ci.yml:84-89
 ' Private genuine-acceptance tooling is deliberately folded; runtime acceptance remains OPEN:
 '   isolated pre-Paper fixture -> installer refuses an absent source API, then stops a healthy fixture API and switches current.
-' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2124-2132,3167-3191,3232-3244,3255-3292; scripts/ops/deploy-production-release.sh:412-414,569-576,603-610
+' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2124-2132,3167-3191,3232-3244,3255-3292; scripts/ops/deploy-production-release.sh:427-429,593-600,627-634
 '   private CLI -> history phase owner -> private Source service custodian.
 ' evidence: scripts/ops/verify-owner-beta-paper-genuine-archive.py:45-74; scripts/ops/lib/owner-beta-paper-genuine-history.py:1241-1246; scripts/ops/lib/owner-beta-paper-genuine-source.py:631-644
 '   custodian -> existing disabled witness installer + exact persistent read-only service-status leaf bind.
@@ -137,7 +137,7 @@
 '   proof example -> nonce-guarded scratch PostgreSQL and private readiness/report files
 ' evidence: crates/api-server/examples/simulation_connection_proof/mod.rs:820-838,880-888,1101-1111,1270-1274,1821-1915
 ' CI delivers the proof separately; these source paths do not establish executed acceptance.
-' evidence: .github/workflows/ci.yml:1463-1470; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
+' evidence: .github/workflows/ci.yml:1468-1482; scripts/ci/build-r4-verification.sh:1121-1145,1791-1806,1841-1845
 ' The genuine manual Paper BACKUP_RESTART fixture is QA-only; its edges are folded:
 '   fixture -> installed backup path, exact retained readback and isolated source SQL
 ' evidence: scripts/ops/owner-beta-paper-genuine-fixture.py:2675-2682,2751-2818
@@ -719,6 +719,7 @@ end note
 package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTIVATED; runtime acceptance NOT_RUN" #F5E8D4 {
   component "owner-beta-paper-operations.py\nretained release lock + live BEGIN fence\nindependent readback / writer drain\nlive DrainedHandle / RECONCILE / OFF" as paper_ops_python
   component "owner-beta-paper-release.py\nverified manifest / image ELF / provenance\nprotected native inputs + reader floor" as paper_ops_release
+  component "Paper consumer preflight\nOFF Compose model and protected input checks" as paper_consumer_preflight
   component "owner-beta-paper-history-inventory.py\npre-switch Paper history proof: ABSENT / PRESENT / UNKNOWN\nfixed read-only SQL + P4 INSPECT; one-use in-process handle" as paper_history_inventory
   component "owner-beta-paper-journal.py\nJournal / Operation\nimmutable stages + monotonic local floor" as paper_ops_journal
   component "ActionCustody / Custody\ninside journal.py; private constructors\nexact action / original / import retention" as paper_ops_action_custody
@@ -736,6 +737,8 @@ paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action li
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1338-1341,1348-1366
 paper_ops_release --> paper_history_inventory : reader_guard consumes the in-process proof
+' evidence: scripts/ops/deploy-production-release.sh:468; scripts/ops/lib/owner-beta-paper-release.py:1425; scripts/ops/lib/owner-beta-paper-preflight.py:99; scripts/ops/lib/owner-beta-paper-preflight.py:38; deploy/compose/compose.owner-beta-paper-preflight.yml:51
+paper_ops_release --> paper_consumer_preflight : installed --check; verify exact Source and OFF consumer model
 ' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:440-457,482-493
 paper_history_inventory --> daily_ops : source manifest / project / context binding;\nmigration-owner DB transport (Database.execute)
 ' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:167-182,691-713

@@ -2843,7 +2843,8 @@ class PaperGenuineWorkflowTests(unittest.TestCase):
         self.assertEqual([row.get("id") for row in fast["steps"]],
                          [row.get("id") for row in full["steps"]])
         by_id = lambda job, step_id: next(row for row in job["steps"] if row.get("id") == step_id)
-        for step_id in ("rust-install", "fixture-postgres-image", "fixture-root-startup"):
+        for step_id in ("rust-install", "fixture-paper-consumer-render",
+                        "fixture-postgres-image", "fixture-root-startup"):
             self.assertEqual(by_id(fast, step_id), by_id(full, step_id))
         marker = "<<'PAPER_JOB_DEADLINE'\n"
         self.assertEqual(

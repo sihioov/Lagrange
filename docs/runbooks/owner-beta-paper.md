@@ -38,6 +38,28 @@ install fail closed. Procedure and rollback limits:
 a pre-Paper root"; contract: `docs/contracts/owner-beta-paper-operations-v1.md`
 section 6.1.
 
+## Render the OFF consumer bindings
+
+After the selected process proposal, matching protected Source witness binding,
+and Source storage exist for the current immutable release, run the release
+installer's read-only check with the witness binding used by `install-kis-daily.sh`.
+
+```sh
+scripts/ops/deploy-production-release.sh --check --commit "$release_commit" \
+  --paper-witness-binding "$paper_witness_binding"
+```
+
+Use the actual root-owned `0600` binding with its original release, owner,
+and cohort. The existing release lock covers the check. `PAPER_PROCESS_PREFLIGHT:
+PASS` verifies the exact images and the rendered read-only input mounts for the
+future API and Paper scheduler. The protected `current` directory can be empty
+before the first ARM. The original witness and dedicated historical artifacts are
+required. The check uses the installed Compose CLI and does not start services,
+change consent, inspect the Paper DB control state, or create an observation.
+Run the ordinary `--check` without this argument for a release with no process
+proposal. Future serving cutover still requires the separate ENABLE and durable
+readback gates.
+
 ## Owner consent preparation
 
 The immutable API release defaults to `OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=false`.
