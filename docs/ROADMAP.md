@@ -9,7 +9,7 @@
 | 최종 갱신일 | 2026-11-25 (Asia/Seoul) |
 | 최초 코드 기준선 | `fce9b90542cf9b1a911d46e4c4d3530db7efba4c` (2026-10-10) |
 | 첫 출시 목표 | 매 거래일 최신 데이터로 종목과 ETF 전략을 확인할 수 있는 Owner 전용 연구 베타 |
-| 현재 실행 우선순위 | **R5-04 야간 백업·복귀가 통과했고, R2의 승인된 과거 EOD 23거래일을 운영에서 복구·검증했다.** 현 설치본의 Paper 복원 서술자 여유는 47개다. 다음 EOD 묶음을 수용할 복원 용량을 준비하고, 독립 입력 검증·등록과 첫 예약 세션을 준비한다. 야간 상태의 Owner UI 대조와 주간 legacy 보관 판단은 미완료다. Daily OFF, Paper CLOSED 상태다. |
+| 현재 실행 우선순위 | **R5-04 야간 백업·복귀가 통과했고, R2의 승인된 과거 EOD 23거래일을 운영에서 복구·검증했다.** 현 설치본의 Paper 복원 서술자 여유는 47개다. 다음 EOD 묶음을 수용할 복원 용량을 준비하고, 독립 입력 검증·등록과 첫 예약 세션을 준비한다. 정규 설치 권한에서 야간 상태가 일치하도록 수집기를 고친 뒤 Owner UI를 대조한다. 주간 legacy 보관 판단도 미완료다. Daily OFF, Paper CLOSED 상태다. |
 | 상세 실행 계획 | [R5 Paper 계획](superpowers/plans/2026-10-29-r5-paper-implementation.md)의 WP-1~7과 G0~G5를 따른다. 모든 WP는 `$paseo-delegate`로 실행하며 후속 실행 요청으로 WP-1을 시작했다. [R4 통합 계획](superpowers/plans/2026-10-27-r4-remaining-integration.md)과 [기존 구현 계획](superpowers/plans/2026-10-26-r4-baseline-expansion-implementation.md)은 완료된 R4의 계약·실행·증거 이력이다. |
 | 야간 결과 기록 | [2026-10-30 R5 진행·검증·미해결 인계](reviews/2026-10-30-r5-overnight.md). 08:30 종료·소유 작업자5/대기0·자원 최종 대조 완료, heartbeat 삭제. 미커밋 후보와 forensic 증거25.1MB를 인계했다. |
 | main 통합 | 완료된 R4 전체의 통합 대상은 [PR #9](https://github.com/sihioov/Lagrange/pull/9)의 최종 head와 merge commit이다. 해당 PR의 필수 CI·merge 기록 및 연결된 main Actions가 Git 통합의 검증 근거이며, application312/maintenance439의 실제 운영 인수와 구분한다. 이 Git 통합으로 운영 릴리스를 전환하지 않는다. 이전 R2/R3·R4 인계 병합 `bb906d3`의 실패·성공 근거는 [기존 병합 기록](reviews/2026-10-24-main-r2-r4-integration.md)·[후속 검증](reviews/2026-10-24-r4-execution.md)에 보존한다. |
@@ -158,7 +158,7 @@ systemd의 상태·결과 필드, 본문을 버리는 HTTP health 요청으로 �
 **먼저 R5-04.** 수정본의 배포 상태, 입력 복구, 백업 정상 복귀, 설치·시작 CI를 먼저 마무리한다. R5에 필요한 R2 작업은 이 순서에 포함한다. 체크박스는 실제 결과를 확보했을 때 갱신한다.
 
 - [ ] **R2-03/04·D-06, R5-04 — 운영 입력 복구와 Daily 준비.** 운영 `7283ec5`의 13개 이미지와 설치 직전 backup/verify, 달력 보충, ETF11 행사 재수집 및 공급기 `ALREADY_COVERED` 확인을 마쳤다. 4개 installed Daily source config가 만료된 DB `2026-10-21` binding과 일치함을 읽기 전용으로 확인했다. Owner가 승인한 10/22~11/23의 과거 23거래일 모두를 11/24에 수집·검증했다. 독립 입력 등록, 첫 예약 세션과 Owner의 Daily 선택은 남았다. [설치 메모](runbooks/production-release-and-backup.md#install-notes-from-the-2026-11-19-release-677b0f3) · [재수집 절차](runbooks/kis-action-range-raw.md#post-release-etf11-per-symbol-recollection-owner-approval-2026-11-17)
-- [ ] **R2-07/09·R5-04 — 야간 백업과 상태 표시.** 11/24 첫 예약 백업·격리 검증·서비스 복귀와 성공 상태 게시가 통과했다. 인증된 Owner UI 대조와 기존 주간 legacy 세트의 보관 판단은 남았다. 다음 nightly는 11/25 02:31:41 KST 예정이다. Daily KIS timer는 비활성이고 Daily와 Paper는 OFF/CLOSED다. [설치·수동 복구 절차](runbooks/production-release-and-backup.md#install-the-nightly-simulation-backup-for-an-inactive-daily-installation)
+- [ ] **R2-07/09·R5-04 — 야간 백업과 상태 표시.** 11/24 첫 예약 백업·격리 검증·서비스 복귀와 성공 상태 게시가 통과했다. 정규 설정의 그룹 소유 상위 디렉터리를 인정하도록 수집기 소스를 보정한다. 새 릴리스의 상태 게시, 인증된 Owner UI 대조와 기존 주간 legacy 세트의 보관 판단은 남았다. Daily KIS timer는 비활성이고 Daily와 Paper는 OFF/CLOSED다. [설치·수동 복구 절차](runbooks/production-release-and-backup.md#install-the-nightly-simulation-backup-for-an-inactive-daily-installation)
 - [ ] **R5-04 — 릴리스 검증.** PostgreSQL 및 13개 이미지의 hosted 검사는 통과했다. 11/23 운영 `7283ec5`에서 private V3 simulation runner가 실제 `STARTED`로 시작했고, 이후 API·Beta·V2·simulation healthy 상태와 전체 11개 컨테이너 healthy 상태를 확인했다. 이는 운영 시작 증거다. 동일 경로의 private hosted Actions 시작 검증은 별도로 미완료다. Paper CLOSED 유지. [설치 검사](runbooks/production-release-and-backup.md#first-paper-capable-release-on-a-pre-paper-root)
 - [ ] **R2-03/04·D-06 — 원본 범위와 다음 입력 게이트.** 11/23 달력 보충과 독립 확인으로 달력 공백 8일을 닫았으며, 같은 날 ETF11 행사 공급기의 읽기 전용 검사가 `ALREADY_COVERED`를 반환했다. 11/24 EOD 복구 후 `kis` 72묶음·3,818파일, `kis-calendar` 7묶음·7파일, 설치본의 Paper 복원 예상 서술자 4,049/4,096을 확인했다. 다음 Daily 수집에 앞서 복원 용량 확보와 독립 입력 등록이 필요하다. [Raw 검사 절차](runbooks/kis-action-range-raw.md#raw-누적량-점검) · [달력 보충 절차](runbooks/kis-action-range-raw.md#d-06-단일-달력-보충-후보) 새로 수집된 `batch.json`의 그룹 읽기 권한도 입력 등록 전에 검증한다.
 
@@ -5033,6 +5033,11 @@ Owner가 비관찰 작업을 먼저 마친 뒤 시장 검증을 마지막에 함
 - 위치 인자를 넘기는 방식을 바로잡은 실행 `ed836ff4b0ff49358b2f6fadff5fe320`은 21:42:41~21:52:50 KST에 종료 코드 0으로 끝났다. 11/16·17·18·19·20·23 모두 운영 영수증을 남겼다. 이 구간의 600파일에서 대상일 일봉과 참조 종목 코드 각 66건, 기업행사 462조합을 확인했다. 전체 23일을 별도로 검사한 결과 누락은 0일이었다. 2,300개 파일의 크기·SHA-256, ETF11의 대상일 OHLCV 253건과 참조 종목 코드 253건, 기업행사 1,771개 종목·유형 조합을 대조했다. KSD 추가 페이지는 0개였다. 17일은 10/22 달력 원본, 6일은 11/15 달력 원본에 연결됐다.
 - 독립 검사에서 첫 EOD manifest 행과 전용 달력 manifest의 해시가 이전과 같았다. 전용 달력은 7묶음·7파일, 검증된 달력 원본은 10개, 운영 달력 예약은 8개로 모두 같았다. `kis`는 72묶음·3,818파일이다. Paper 복원 서술자 4,049/4,096은 manifest 기준 예상값이다. 수집 전후 운영 릴리스는 `7283ec5`였고 독립 검사는 네트워크 없이 Raw 읽기 전용으로 실행했다. 마지막 6일의 조정기 예약은 594개 증가했고 달력 호출·토큰 발급의 기록 시각은 같았다. 운영 컨테이너 11개의 이미지와 정상 상태도 같았다. 전송 계층의 실제 HTTP 총횟수와 재시도는 집계하지 않았다.
 - 과거 일봉에서 가격과 거래량을 검증했고, `inquire-price`는 요청한 ETF 종목의 식별에 사용했다. 이 단계의 결과는 Raw 수집·검증까지다. DB 입력 등록, Curated·추천 발행, 첫 Daily 예약 및 실제 연속 거래일 관찰은 남았다. Daily OFF, Paper CLOSED 상태를 유지했다.
+
+
+### 2026-11-25 — R2-07/R5-04 야간 상태 관측기 권한
+
+- 야간 설정과 유지보수 고정 파일의 보호 경로 검사에서 정규 설정 디렉터리의 그룹 소유를 거부하는 조건을 격리 재현했다. 이 경계의 고정 디렉터리에만 설치 도구가 지정하는 기본 서비스 그룹과 0750 권한을 허용하며 ACL을 거부한다. 합성 원본에서 자격 증명 파일의 존재와 부재, 외부 소유·쓰기 권한·경로 교체 거부를 대조했다. 새 소스의 운영 상태 게시와 인증된 Owner 화면 검증은 남았다.
 
 
 ### 2026-11-25 — R2-04 Daily 재검사 누적 용량

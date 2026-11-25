@@ -475,7 +475,7 @@ api --> pg : worker-only RECOVER grant + original T/E;\nsettlement/valuation in 
 status_timer --> status_service : optional 30s one-shot observer
 ' evidence: scripts/ops/collect-service-status.py:45-69,167-189,357-411,846-859,1334
 status_host_fields --> status_service : fixed safe-field reads only
-' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:370-436
+' evidence: deploy/systemd/lagrange-service-status.service:13; scripts/ops/collect-service-status.py:1288-1298; scripts/ops/lib/service-status-policy.py:411-489
 status_service --> status_snapshot : root-owned atomic publish
 ' evidence: deploy/compose/compose.service-status.yml:7-12; crates/api-server/src/service_status.rs:27-28,280-282,434-450,531-543
 status_snapshot ..> api : optional read-only DIRECTORY mount;\nfixed path and ownership validation
