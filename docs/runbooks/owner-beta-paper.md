@@ -84,7 +84,7 @@ observation. Use the [canonical nightly service install and preflight](productio
 with the release's `daily-simulation` backup profile. Preflight checks the fixed
 Daily date and mode on the installed release. A configured account must be
 `OFF`, agree with the retained journal floor, and have no active Paper process
-binding. Preflight emits `NIGHTLY_PAPER CONFIGURED_OFF` for this route. A verified
+binding. Preflight emits `NIGHTLY_PAPER CONFIGURED_OFF` with its source digest. A verified
 empty Paper history uses the existing Daily/simulation route. The explicit
 combined backup remains available when an operator needs a fresh OFF boundary.
 
@@ -113,7 +113,18 @@ for the Paper consent release.
 The nightly sequence resumes the previously running cohort after archive
 verification. A final readback must reproduce the original control, consent and
 witness identity for the date to pass. A refusal preserves the step record for
-manual recovery. Confirm two consecutive successful nights on the same
+manual recovery. Acknowledge a failed night only after fresh readback matches
+the journaled Paper identity. Before backup starts, the protected preflight
+identity supplies that proof. Once backup starts, recovery requires its exact
+archive and captured identity. Acknowledgment preserves the failed outcome.
+Follow the [attended recovery procedure](production-release-and-backup.md#nightly-backup-on-a-simulation-enabled-release-2026-11-20)
+when the original identity is still provable. If consent changed, the witness
+advanced to another reservation, or the original identity is uncertain,
+retain the failed claim and journal. Report which identity changed using the
+protected readback, or report that the difference could not be determined.
+The Owner must decide how to resolve the failed attempt. Preserve legitimate
+consent changes, source reservations and archived receipts during that review.
+Confirm two consecutive successful nights on the same
 configured OFF account with a stable epoch and consent. Include one genuine
 source witness that remains armed through backup and dispatches its original
 claim normally. Check the encrypted set's isolated restore and the services

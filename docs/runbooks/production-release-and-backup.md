@@ -1622,9 +1622,10 @@ activation epoch is at least one. Keep a separate protected backup root for the
 `LAGRANGE_NIGHTLY_DAILY_SIMULATION_BACKUP_V1` sets. The installer still requires
 the old nightly timer to be stopped and retired before binding the new config.
 
-The preflight requires native `LEGACY_EMPTY` Paper history, current
-application/tool compatibility, the same-release API resume plan, and the
-exact Daily cohort. With DB OFF after rebind, the sealed manual Beta is the
+The preflight requires current application/tool compatibility, the
+same-release API resume plan, and the exact Daily cohort. It selects the
+legacy backup route only after native verification reports `LEGACY_EMPTY`.
+With DB OFF after rebind, the sealed manual Beta is the
 only Daily-related process resumed. With Daily ON, all three stages and the
 API must be healthy at the recorded revisions. The scheduled attempt drains
 those writers and confirms their original stopped generations and restart
@@ -1646,9 +1647,9 @@ After both verifications succeed, the scheduler restores the API, any
 captured simulation worker and the observer. The original healthy Daily
 writers are resumed last, after a readback of the original live mode and
 epoch. A second readback follows their health checks. Unknown history,
-orphaned admissions or a changed source fail the attempt. A configured or
-unknown Paper history requires the Paper procedure and cannot select this
-profile.
+orphaned admissions or a changed source fail the attempt. For a verified
+configured OFF Paper account, the same scheduler instead selects the
+[configured OFF archive and recovery procedure](owner-beta-paper.md#daily-backup-before-paper-activation).
 
 A failed attempt retains the original claim and progress for attended recovery.
 Failure after active drain begins attempts to turn Daily OFF and stop only
@@ -1659,7 +1660,8 @@ record remains unresolved. For this profile,
 daily-simulation` with the original pins only verifies the operator-recovered
 cohort. It starts no process and never enables Daily. A manually recovered
 epoch that has advanced remains a new epoch and cannot count as continuity
-evidence for the original one.
+evidence for the original one. Configured OFF recovery additionally requires
+fresh proof of the original consent and source reservation before acknowledgment.
 
 ## Preactivation checkpoint with independently preserved dates
 

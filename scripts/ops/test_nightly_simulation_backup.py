@@ -101,7 +101,7 @@ class NightlyTests(unittest.TestCase):
         self.assertFalse(nightly.complete(record))
         record["steps"][nightly.DAILY_RESUME_STEP] = {"state": "done", "code": None}
         self.assertTrue(nightly.complete(record))
-        record["nightly"] = {"paper_configured_off": True}
+        record["nightly"] = {"paper_configured_off": True, "paper_preflight_origin": "sha256:" + "2"*64}
         self.assertFalse(nightly.complete(record))
         record.update(nightly_paper_archive="sha256:" + "1"*64,
                       nightly_paper_origin="sha256:" + "2"*64,
@@ -386,6 +386,38 @@ class NightlyTests(unittest.TestCase):
         result = nightly.rg.strict_json((self.run_path / nightly.RESULT).read_bytes(), "TEST")
         self.assertEqual(result["status"], "FAILED")
         self.assertTrue((self.run_path / nightly.ACK).is_file())
+
+    def test_configured_off_ack_requires_the_same_live_origin_after_recovery(self):
+        case = self.connect_sequencer()
+        self.config.update(schema=nightly.COMBINED_CONFIG_SCHEMA, backup_profile="daily-simulation",
+                           expected_db_first_session=self.config["expected_config_first_session"])
+        self.write_config()
+        case.configured_paper = case.changed_paper_readback = True
+        case.combined_fixture(enabled=False)
+        self.assertIn("NIGHTLY_CHILD_APPLY", self.invoke("--apply")[2])
+        original = (self.run_path / nightly.RESULT).read_bytes()
+        self.assertEqual(nightly.load_record(original, "TEST")["status"], "FAILED")
+        before = case.mutations()
+        args = [arg for arg in self.calls[1][0][5:] if arg != "--nightly"]
+        for option in ("--expected-nightly-paper-profile", "--expected-nightly-paper-origin"):
+            index = args.index(option)
+            del args[index:index + 2]
+        args.extend(("--step", "recover"))
+
+        self.assertNotEqual(case.run_tool(args)[0], 0)
+        case.changed_paper_readback = False
+        self.assertEqual(case.run_tool(args), (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+        self.assertEqual(case.mutations(), before)
+        proof = case.paper_proof
+        case.paper_proof = "sha256:" + "1"*64
+        self.assertIn("NIGHTLY_RECOVERY_COHORT", self.invoke("--acknowledge", self.date)[2])
+        self.assertFalse((self.run_path / nightly.ACK).exists())
+
+        case.paper_proof = proof
+        self.assertEqual(self.invoke("--acknowledge", self.date)[0], 0)
+        self.assertEqual((self.run_path / nightly.RESULT).read_bytes(), original)
+        self.assertEqual(nightly.load_record((self.run_path / nightly.ACK).read_bytes(), "TEST")
+                         ["observation"]["paper_origin"], proof)
 
     def test_actual_apply_preflight_failure_is_acknowledgeable_without_recovery(self):
         case = self.connect_sequencer()

@@ -3379,6 +3379,7 @@ def preflight_nightly_paper(context, lock_fd, daily_state):
         try:
             observer.database("observe")
             observer.observe_source_phase()
+            return observer.origin_sha256()
         finally:
             observer.close()
 

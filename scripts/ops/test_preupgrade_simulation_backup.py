@@ -1261,7 +1261,8 @@ class NightlyTests(Base):
             operation, mode = argv[argv.index("--operation") + 1], argv[argv.index("--mode") + 1]
             if operation == "nightly-combined-backup" and mode == "preflight":
                 self.children(argv, env, timeout)
-                return 0, (tool.PREFLIGHT_LINE + "\n" + tool.PAPER_PREFLIGHT_LINE + "\n").encode(), b""
+                return 0, ("\n".join((tool.PREFLIGHT_LINE, tool.PAPER_PREFLIGHT_LINE,
+                                      tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
             if operation == "nightly-combined-paper-readback":
                 self.assertEqual(mode, "readback")
                 self.assertIn("--expected-nightly-paper-off", argv)
@@ -1512,6 +1513,7 @@ class NightlyTests(Base):
             self.assertEqual(result[0], 0, result)
             record = self.progress()
             self.assertTrue(record["nightly"]["paper_configured_off"])
+            self.assertEqual(record["nightly"]["paper_preflight_origin"], self.paper_proof)
             self.assertTrue(record["nightly_paper_origin_unchanged"])
             self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
             archives.append(record["nightly_paper_archive"])
@@ -1543,6 +1545,48 @@ class NightlyTests(Base):
         self.assertIn(tool.NIGHTLY_ERROR, result[2])
         self.assertEqual(self.progress()["steps"], {})
         self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+
+    def test_configured_off_nightly_rejects_origin_drift_before_signalling(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF",
+                                  "--expected-nightly-paper-origin", "sha256:" + "0"*64)
+        self.assertFailed(self.run_tool(argv), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertEqual(self.mutations(), [])
+
+    def test_configured_off_recovery_requires_origin_or_proof_backup_never_started(self):
+        self.configured_paper = self.changed_paper_readback = True
+        self.combined_fixture(enabled=False)
+        self.assertFailed(self.run_tool(self.combined_argv("--apply", "--nightly")), tool.NIGHTLY_ERROR)
+        record = self.progress()
+        self.assertEqual(record["steps"]["backup"]["state"], "done")
+        self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
+        path = Path(self.state) / (tool.PROGRESS_NAME + ".json")
+        recover = self.combined_argv("--apply", "--step", "recover")
+        recovered_services = self.mutations()
+
+        self.assertFailed(self.run_tool(recover), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress(), record)
+        self.assertEqual(self.mutations(), recovered_services)
+
+        self.changed_paper_readback = False
+        uncertain = {key: value for key, value in record.items()
+                     if key not in {"nightly_paper_archive", "nightly_paper_origin"}}
+        uncertain["steps"] = {"backup": {"state": "started", "code": None}}
+        path.write_bytes(tool.rg.canonical(uncertain))
+        self.assertFailed(self.run_tool(recover), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress(), uncertain)
+
+        before_archive = dict(uncertain, steps={"stop-beta": {"state": "failed", "code": tool.NIGHTLY_ERROR}})
+        path.write_bytes(tool.rg.canonical(before_archive))
+        readback = ("pinned", "nightly-combined-paper-readback", "readback")
+        before_reads = self.events.count(readback)
+        self.assertEqual(self.run_tool(recover)[0:2], (0, "PREUPGRADE_BACKUP: RECOVERED\n"))
+        self.assertEqual(self.events.count(readback), before_reads + 1)
+        self.assertNotIn("nightly_paper_origin", self.progress())
+        self.assertTrue(self.progress()["nightly_recovered"])
+        self.assertEqual(self.mutations(), recovered_services)
 
     def test_combined_nightly_preserves_the_original_daily_api_when_control_was_off(self):
         self.combined_fixture(enabled=True)

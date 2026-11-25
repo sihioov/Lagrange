@@ -2243,6 +2243,7 @@ def main(argv=None):
             with paper_capture_release_lock(args.install_root) as release_fd:
                 paper_context = paper_prefix_context(context)
                 paper_profile = None
+                paper_origin = None
                 paper_result = None
                 if nightly_combined:
                     paper_profile = _paper_backup_module().inspect_nightly_paper(paper_context, release_fd)
@@ -2257,7 +2258,10 @@ def main(argv=None):
                     if nightly_combined:
                         state = database.nightly_state(release, commit, values, expected_dates[0])
                         if paper_profile == "CONFIGURED_OFF":
-                            _paper_backup_module().preflight_nightly_paper(paper_context, release_fd, state)
+                            paper_origin = _paper_backup_module().preflight_nightly_paper(
+                                paper_context, release_fd, state)
+                            require(type(paper_origin) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", paper_origin),
+                                    "DAILY_BACKUP_NIGHTLY_BINDING")
                     else:
                         preactivation_date_binding(database.backup_audit(values), daily_config, expected_dates)
                     if args.operation.endswith("-backup"):
@@ -2292,6 +2296,7 @@ def main(argv=None):
             print("DAILY_BACKUP: PREFLIGHT")
             if paper_profile == "CONFIGURED_OFF":
                 print("DAILY_BACKUP: NIGHTLY_PAPER_CONFIGURED_OFF")
+                print("DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN " + paper_origin)
             return 0
         def terminated(signum, frame):
             raise runtime.RuntimeErrorCode("DAILY_BACKUP_TERMINATED")
