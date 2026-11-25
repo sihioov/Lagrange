@@ -1,7 +1,7 @@
 //! Protected observation preparation and refresh; no current DB authority.
 //! The file-store adapter must bind these bytes to the admitter-owned state root.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use domain::{ContentHash, TradingDate};
 use serde::{Deserialize, Serialize};
@@ -556,7 +556,9 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
 ) -> Result<RefreshedSourceFrontier<'proof, 'parent, 'base, 'snapshot>, SourceFrontierRefreshError>
 {
     use super::admission::DailyAdmissionVerificationError as AdmissionError;
-    use super::discovery::{CalendarSelection, IndexedSessionSources, SessionSourceRequest};
+    use super::discovery::{
+        CalendarSelection, IndexedSessionSources, SessionSourceRequest, sealed_calendar_deliveries,
+    };
     use super::observation::compare_source_observation;
     parent.revalidate()?;
     sealed.revalidate()?;
@@ -590,7 +592,7 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
             }
         }
     }
-    let mut passes = (manifest.daily_sources.len() as u64)
+    let passes = (manifest.daily_sources.len() as u64)
         .checked_add(1)
         .ok_or(AdmissionError::LimitExceeded)?;
     let mut work = RefreshWork::default();
@@ -698,6 +700,7 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
         &mut |bytes, files| work.charge(bytes, files),
     )
     .map_err(AdmissionError::Evidence)?;
+    let calendar_deliveries = sealed_calendar_deliveries(sealed.observation().files());
     let mut files = Vec::new();
     for (index, previous) in manifest.daily_sources.iter().enumerate() {
         let request = SessionSourceRequest {
@@ -706,22 +709,19 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
             previous_frontier: previous.previous_frontier,
             session_date: previous.session_date,
         };
-        let preferred = sources
-            .discover(
-                &request,
-                CalendarSelection::CurrentTargetPreferred,
-                |bytes, files| work.charge(bytes, files),
-            )
-            .map_err(AdmissionError::Evidence);
-        let current = select_reconstructed_sealed_session(previous, preferred, || {
-            passes = passes.checked_add(1).ok_or(AdmissionError::LimitExceeded)?;
-            check_refresh_budget(0, 0, passes).map_err(AdmissionError::Evidence)?;
+        let current = require_reconstructed_sealed_session(
+            previous,
             sources
-                .discover(&request, CalendarSelection::LegacyHash, |bytes, files| {
-                    work.charge(bytes, files)
-                })
-                .map_err(AdmissionError::Evidence)
-        })?;
+                .discover(
+                    &request,
+                    CalendarSelection::Sealed {
+                        bindings: &previous.calendar,
+                        deliveries: &calendar_deliveries,
+                    },
+                    |bytes, files| work.charge(bytes, files),
+                )
+                .map_err(AdmissionError::Evidence),
+        )?;
         if index == 0 {
             let conflict = super::price_extension::compare_observed_prefix_charged(
                 super::price_extension::PricePrefixView {
@@ -784,15 +784,9 @@ pub fn refresh_source_frontier<'proof, 'parent, 'base, 'snapshot>(
     })
 }
 
-// Called only after the parent/frontier and captured original set were checked.
-// The legacy branch reproduces one exact committed session, never a new input.
-pub(super) fn select_reconstructed_sealed_session<'snapshot>(
+pub(super) fn require_reconstructed_sealed_session<'snapshot>(
     previous: &super::DailySessionEvidenceV1Wire,
-    preferred: Result<
-        super::discovery::DiscoveredSessionSources<'snapshot>,
-        super::admission::DailyAdmissionVerificationError,
-    >,
-    legacy: impl FnOnce() -> Result<
+    current: Result<
         super::discovery::DiscoveredSessionSources<'snapshot>,
         super::admission::DailyAdmissionVerificationError,
     >,
@@ -800,15 +794,11 @@ pub(super) fn select_reconstructed_sealed_session<'snapshot>(
     super::discovery::DiscoveredSessionSources<'snapshot>,
     super::admission::DailyAdmissionVerificationError,
 > {
-    let current = preferred?;
-    if current.session() == previous {
-        return Ok(current);
-    }
-    let prior = legacy()?;
-    if prior.session() != previous {
+    let current = current?;
+    if current.session() != previous {
         return Err(super::admission::DailyAdmissionVerificationError::InvalidCandidate);
     }
-    Ok(prior)
+    Ok(current)
 }
 
 #[cfg(test)]
@@ -848,6 +838,22 @@ fn appended_sealed_observation_charged(
         .start()
         .checked_add_days(-1)
         .map_err(|_| Error::InvalidContext)?;
+    let mut sealed_calendar_origins = BTreeMap::<_, Vec<_>>::new();
+    for file in expected
+        .files()
+        .iter()
+        .filter(|file| file.kind == Kind::Calendar)
+    {
+        let origin = file
+            .copied_from
+            .last()
+            .cloned()
+            .unwrap_or_else(|| super::contract::origin_from_evidence(file));
+        let known = sealed_calendar_origins.entry(origin.batch_id).or_default();
+        if !known.contains(&origin) {
+            known.push(origin);
+        }
+    }
     let mut known = std::collections::BTreeSet::new();
     let mut files = expected.files().to_vec();
     let mut evidence_bytes = 0u64;
@@ -955,12 +961,26 @@ fn appended_sealed_observation_charged(
     for projection in
         super::calendar::project_calendar_candidates(&calendars, owner, policy_sha256)?
     {
+        let file = projection.source_file();
+        // All deliveries and copy hops were authenticated above. A new copy
+        // delivered beyond this frontier is not a new sealed-date source when
+        // its full terminal original was already proved. Existing sealed
+        // deliveries remain in `files` and were revalidated by the caller.
+        if file.batch_date > *range.end()
+            && file.copied_from.last().is_some_and(|origin| {
+                sealed_calendar_origins
+                    .get(&origin.batch_id)
+                    .is_some_and(|known| known.contains(origin))
+            })
+        {
+            continue;
+        }
         if projection
             .days()
             .iter()
             .any(|day| range.contains(&day.session_date()))
         {
-            add(projection.source_file(), projection.canonical_file_bytes())?;
+            add(file, projection.canonical_file_bytes())?;
         }
     }
     Ok(files)

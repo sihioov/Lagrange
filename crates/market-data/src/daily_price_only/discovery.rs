@@ -180,10 +180,28 @@ fn terminal_evidence_date(evidence: &DailyFileEvidenceV1Wire) -> TradingDate {
 #[path = "discovery_compat_tests.rs"]
 mod compat_tests;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CalendarSelection {
+pub(super) type SealedCalendarDeliveries<'a> =
+    BTreeMap<domain::BatchId, Vec<&'a DailyFileEvidenceV1Wire>>;
+
+pub(super) fn sealed_calendar_deliveries(
+    files: &[DailyFileEvidenceV1Wire],
+) -> SealedCalendarDeliveries<'_> {
+    let mut deliveries = SealedCalendarDeliveries::new();
+    for file in files.iter().filter(|file| file.kind == Kind::Calendar) {
+        deliveries.entry(file.batch_id).or_default().push(file);
+    }
+    deliveries
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum CalendarSelection<'a> {
     CurrentTargetPreferred,
+    #[cfg(test)]
     LegacyHash,
+    Sealed {
+        bindings: &'a [DailyCalendarBindingV1Wire],
+        deliveries: &'a SealedCalendarDeliveries<'a>,
+    },
 }
 
 /// Enumerates the snapshots itself. Duplicate target bar/reference deliveries,
@@ -203,7 +221,7 @@ pub fn discover_session_sources<'snapshot>(
 pub(super) fn discover_session_sources_with_selection<'snapshot>(
     snapshots: &RawEvidenceSnapshots<'snapshot>,
     request: &SessionSourceRequest,
-    selection: CalendarSelection,
+    selection: CalendarSelection<'_>,
 ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
     let start = validate_source_request(snapshots, request)?;
     let raw = collect_price_sources(snapshots, Some(request.session_date), &mut |_, _| Ok(()))?;
@@ -465,7 +483,7 @@ impl<'view, 'snapshot> IndexedSessionSources<'view, 'snapshot> {
     pub(super) fn discover(
         &self,
         request: &SessionSourceRequest,
-        selection: CalendarSelection,
+        selection: CalendarSelection<'_>,
         mut charge: impl FnMut(u64, u64) -> Result<(), Error>,
     ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
         let start = validate_source_request(self.snapshots, request)?;
@@ -499,6 +517,13 @@ impl<'view, 'snapshot> IndexedSessionSources<'view, 'snapshot> {
         for index in selected {
             let projection = &self.calendars[index];
             charge(projection.source_file().size_bytes, 1)?;
+            if let CalendarSelection::Sealed { deliveries, .. } = selection
+                && !deliveries
+                    .get(&projection.source_file().batch_id)
+                    .is_some_and(|known| known.contains(&projection.source_file()))
+            {
+                continue;
+            }
             calendars.push(projection.clone());
         }
         assemble_session_sources(
@@ -536,7 +561,7 @@ struct SessionPriceSources<'a, 'snapshot> {
 fn assemble_session_sources<'snapshot>(
     request: &SessionSourceRequest,
     start: TradingDate,
-    selection: CalendarSelection,
+    selection: CalendarSelection<'_>,
     sources: SessionPriceSources<'_, 'snapshot>,
     reconstruct_actions: impl FnOnce() -> Result<VerifiedActionDocument<'snapshot>, Error>,
 ) -> Result<DiscoveredSessionSources<'snapshot>, Error> {
@@ -588,22 +613,39 @@ fn assemble_session_sources<'snapshot>(
         if day.session_type() != expected {
             return Err(Error::CalendarConflict);
         }
-        // The current requested original belongs to this capture; surrounding
-        // rows remain valid dependencies. Proof conflict checks include both.
-        let preferred = if selection == CalendarSelection::CurrentTargetPreferred
-            && day.date() == request.session_date
-        {
-            day.witnesses().iter().find(|hash| {
-                by_hash.get(hash.as_str()).is_some_and(|projection| {
-                    let file = projection.source_file();
-                    file.copied_from
-                        .last()
-                        .map_or(file.batch_date, |origin| origin.batch_date)
-                        == request.session_date
+        let preferred = match selection {
+            CalendarSelection::Sealed { bindings, .. } => {
+                // A subsequent admission may include a new delivery of a known
+                // original. Earlier documents must keep their exact witness.
+                let index = bindings
+                    .binary_search_by_key(&day.date(), |binding| binding.civil_date)
+                    .map_err(|_| Error::InvalidEvidence)?;
+                let binding = &bindings[index];
+                Some(
+                    day.witnesses()
+                        .iter()
+                        .find(|hash| {
+                            by_hash.get(hash.as_str()).is_some_and(|projection| {
+                                projection.source_file() == &binding.source_file
+                            })
+                        })
+                        .ok_or(Error::InvalidEvidence)?,
+                )
+            }
+            // Fresh discovery prefers a current requested original. The proof
+            // still includes every valid surrounding witness.
+            CalendarSelection::CurrentTargetPreferred if day.date() == request.session_date => {
+                day.witnesses().iter().find(|hash| {
+                    by_hash.get(hash.as_str()).is_some_and(|projection| {
+                        let file = projection.source_file();
+                        file.copied_from
+                            .last()
+                            .map_or(file.batch_date, |origin| origin.batch_date)
+                            == request.session_date
+                    })
                 })
-            })
-        } else {
-            None
+            }
+            _ => None,
         };
         let selected = by_hash
             .get(preferred.unwrap_or(day.selected_evidence()).as_str())

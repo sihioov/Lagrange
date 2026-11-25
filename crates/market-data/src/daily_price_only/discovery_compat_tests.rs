@@ -4,10 +4,10 @@ use super::*;
 use crate::HistoricalPriceOnlyBar;
 use crate::daily_price_only::admission::DailyAdmissionVerificationError as AdmissionError;
 use crate::daily_price_only::frontier::{
-    appended_sealed_observation, select_reconstructed_sealed_session,
+    appended_sealed_observation, require_reconstructed_sealed_session,
 };
 use crate::daily_price_only::observation::{
-    DailyBlockCode, DailySourceKind, compare_source_observation,
+    DailyBlockCode, DailySourceKind, canonical_source_observation, compare_source_observation,
 };
 use crate::daily_price_only::price_extension::{
     PricePrefixView, compare_observed_prefix, reconstruct_prefix_prices,
@@ -17,7 +17,6 @@ use crate::daily_price_only::source::{
 };
 use crate::storage::ManifestEntry;
 use domain::{BatchId, FixedPoint};
-use std::cell::Cell;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -346,6 +345,60 @@ impl Fixture {
         self.append_batch(&entry, &folder, &manifest, records);
     }
 
+    fn append_calendar_delivery(
+        &self,
+        id: u128,
+        date: TradingDate,
+        copied: bool,
+        edit: impl FnOnce(&mut ManifestEntry),
+    ) -> BatchId {
+        let origin = self
+            .root
+            .join("raw/manifests/provider=kis-calendar/market=kr/manifest.jsonl");
+        let mut entry: ManifestEntry =
+            serde_json::from_str(fs::read_to_string(origin).unwrap().lines().next().unwrap())
+                .unwrap();
+        assert_eq!(entry.files.len(), 1);
+        let body = fs::read(self.root.join(format!(
+            "raw/provider={}/market=kr/date={}/batch={}/{}",
+            entry.provider, entry.date, entry.batch_id, entry.files[0].file_name,
+        )))
+        .unwrap();
+        if copied {
+            let source = &entry.files[0];
+            let lineage = SourceFileReference {
+                provider: entry.provider.clone(),
+                market: entry.market.clone(),
+                batch_id: entry.batch_id,
+                file_name: source.file_name.clone(),
+                content_hash: source.content_hash.clone(),
+                retrieved_at: entry.retrieved_at,
+            };
+            entry.files[0].copied_from = Some(lineage);
+            entry.provider = "kis".to_owned();
+        }
+        edit(&mut entry);
+        entry.batch_id = BatchId::from_uuid(Uuid::from_u128(id));
+        entry.date = date;
+        entry.retrieved_at = domain::UtcTimestamp::parse_rfc3339("2026-10-19T01:24:01Z").unwrap();
+        let folder = self.root.join(format!(
+            "raw/provider={}/market=kr/date={}/batch={}",
+            entry.provider, entry.date, entry.batch_id
+        ));
+        let manifest = self.root.join(format!(
+            "raw/manifests/provider={}/market=kr/manifest.jsonl",
+            entry.provider
+        ));
+        write(&self.root, &folder.join(&entry.files[0].file_name), &body);
+        self.append_batch(
+            &entry,
+            &folder,
+            &manifest,
+            fs::read_to_string(&manifest).unwrap(),
+        );
+        entry.batch_id
+    }
+
     fn append_batch(&self, entry: &ManifestEntry, folder: &Path, manifest: &Path, records: String) {
         let metadata = serde_json::to_vec(entry).unwrap();
         write(&self.root, &folder.join("batch.json"), &metadata);
@@ -416,6 +469,199 @@ fn frontier_refresh_ignores_only_truncated_action_chains_and_still_detects_a_com
     bytes[0] = b' ';
     fs::write(path, bytes).unwrap();
     assert!(scope.revalidate().is_err());
+}
+
+#[test]
+fn sealed_frontier_retains_prior_calendar_copies_without_resealing_a_later_exact_copy() {
+    let requested = request();
+    let range = day("2026-08-29")..=requested.session_date;
+    let session_dates = BTreeSet::from([first_session().session_date, requested.session_date]);
+    let baseline = fixture(3, Mutation::None, None);
+    let existing_copy = baseline.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+    let initial_scopes = baseline.read();
+    let initial_context = context(&initial_scopes);
+    let make_observation = |snapshot: &RawEvidenceSnapshots<'_>| {
+        let first = discover_session_sources(snapshot, &first_session()).unwrap();
+        let last = discover_session_sources(snapshot, &requested).unwrap();
+        let mut files = first.observation().files().to_vec();
+        files.extend_from_slice(last.observation().files());
+        canonical_source_observation(&files).unwrap()
+    };
+    let expected = make_observation(&initial_context);
+    assert!(
+        expected
+            .files()
+            .iter()
+            .any(|file| file.batch_id == existing_copy)
+    );
+
+    let later = fixture(3, Mutation::None, None);
+    later.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+    let appended_copy = later.append_calendar_delivery(5002, day("2026-10-19"), true, |_| {});
+    let later_scopes = later.read();
+    let snapshots = context(&later_scopes);
+    let next_observation = make_observation(&snapshots);
+    assert!(
+        next_observation
+            .files()
+            .iter()
+            .any(|file| file.batch_id == appended_copy),
+        "fresh discovery retains the real newly committed copy"
+    );
+
+    let indexed = IndexedSessionSources::new(
+        &snapshots,
+        requested.owner,
+        &requested.policy_sha256,
+        &mut |_, _| Ok(()),
+    )
+    .unwrap();
+    for prior in [first_session(), request()] {
+        let sealed = discover_session_sources_with_selection(
+            &initial_context,
+            &prior,
+            CalendarSelection::LegacyHash,
+        )
+        .unwrap();
+        // The newest admitted observation can subsequently include the later
+        // alias while the older session's document retains its exact source.
+        for (known, contains_later) in [(&expected, false), (&next_observation, true)] {
+            let deliveries = sealed_calendar_deliveries(known.files());
+            let replay = indexed
+                .discover(
+                    &prior,
+                    CalendarSelection::Sealed {
+                        bindings: &sealed.session().calendar,
+                        deliveries: &deliveries,
+                    },
+                    |_, _| Ok(()),
+                )
+                .unwrap();
+            assert_eq!(sealed.session(), replay.session());
+            assert_eq!(sealed.evidence_preimage(), replay.evidence_preimage());
+            assert_eq!(
+                replay
+                    .observation()
+                    .files()
+                    .iter()
+                    .any(|f| f.batch_id == appended_copy),
+                contains_later
+            );
+        }
+    }
+
+    let observe = |s: &RawEvidenceSnapshots<'_>| {
+        appended_sealed_observation(
+            requested.owner,
+            &requested.policy_sha256,
+            range.clone(),
+            &session_dates,
+            &expected,
+            s,
+        )
+    };
+    let observed = observe(&snapshots).unwrap();
+    assert!(
+        compare_source_observation(
+            requested.owner,
+            *range.start(),
+            *range.end(),
+            &expected,
+            &observed
+        )
+        .unwrap()
+        .is_none(),
+        "an authenticated later delivery of the same terminal original supplies no additional sealed-date evidence"
+    );
+
+    for (date, copied) in [(day("2026-10-18"), true), (day("2026-08-31"), false)] {
+        let conflicting = fixture(3, Mutation::None, None);
+        conflicting.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+        conflicting.append_calendar_delivery(5002, date, copied, |_| {});
+        let scopes = conflicting.read();
+        let files = observe(&context(&scopes)).unwrap();
+        let event = compare_source_observation(
+            requested.owner,
+            *range.start(),
+            *range.end(),
+            &expected,
+            &files,
+        )
+        .unwrap()
+        .expect("a same-date delivery or distinct original remains a conflict");
+        assert_eq!(
+            (event.kind(), event.code()),
+            (
+                DailySourceKind::Calendar,
+                DailyBlockCode::SealedSourceChanged
+            )
+        );
+    }
+
+    let changed = fixture(3, Mutation::CalendarConflict, None);
+    changed.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+    changed.append_calendar_delivery(5002, day("2026-10-19"), true, |_| {});
+    let changed_scopes = changed.read();
+    let changed_files = observe(&context(&changed_scopes)).unwrap();
+    let event = compare_source_observation(
+        requested.owner,
+        *range.start(),
+        *range.end(),
+        &expected,
+        &changed_files,
+    )
+    .unwrap()
+    .expect("rewritten original with the same batch identity is not redundant");
+    assert_eq!(
+        (event.kind(), event.code()),
+        (
+            DailySourceKind::Calendar,
+            DailyBlockCode::SealedSourceChanged
+        )
+    );
+
+    let invalid_metadata: [fn(&mut ManifestEntry); 2] = [
+        |entry| {
+            entry.files[0].response_continuation = Some(
+                if entry.files[0].response_continuation.as_deref() == Some("F") {
+                    "E"
+                } else {
+                    "F"
+                }
+                .to_owned(),
+            );
+        },
+        |entry| {
+            entry.files[0].copied_from.as_mut().unwrap().batch_id =
+                BatchId::from_uuid(Uuid::from_u128(9999));
+        },
+    ];
+    for mutate in invalid_metadata {
+        let invalid = fixture(3, Mutation::None, None);
+        invalid.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+        invalid.append_calendar_delivery(5002, day("2026-10-19"), true, mutate);
+        let scopes = invalid.read();
+        assert!(
+            observe(&context(&scopes)).is_err(),
+            "invalid later deliveries must fail before copy relevance is evaluated"
+        );
+    }
+
+    let invalid = fixture(3, Mutation::None, None);
+    invalid.append_calendar_delivery(5001, day("2026-10-18"), true, |_| {});
+    let foreign = invalid.append_calendar_delivery(5003, day("2026-08-31"), false, |entry| {
+        entry.entitlement_reference = Some("fixture-other-entitlement".to_owned());
+    });
+    invalid.append_calendar_delivery(5002, day("2026-10-19"), true, |entry| {
+        let linked = entry.files[0].copied_from.as_mut().unwrap();
+        linked.batch_id = foreign;
+        linked.retrieved_at = domain::UtcTimestamp::parse_rfc3339("2026-10-19T01:24:01Z").unwrap();
+    });
+    let scopes = invalid.read();
+    assert_eq!(
+        observe(&context(&scopes)).unwrap_err(),
+        Error::EntitlementMismatch
+    );
 }
 
 #[test]
@@ -643,15 +889,16 @@ fn missing_target_still_requires_an_earlier_verified_closed_request_and_prior_ro
 
 #[test]
 fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
+    let requested = request();
     let mut exercised_legacy = false;
     for id in 3..=32 {
         let fixture = fixture(id, Mutation::None, None);
         let scopes = fixture.read();
         let snapshots = context(&scopes);
-        let preferred = discover_session_sources(&snapshots, &request()).unwrap();
+        let preferred = discover_session_sources(&snapshots, &requested).unwrap();
         let legacy = discover_session_sources_with_selection(
             &snapshots,
-            &request(),
+            &requested,
             CalendarSelection::LegacyHash,
         )
         .unwrap();
@@ -660,13 +907,7 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
             preferred.observation().files(),
             legacy.observation().files()
         );
-        let exact = preferred.session().clone();
-        let selected = select_reconstructed_sealed_session(&exact, Ok(preferred), || {
-            panic!("exact preferred reconstruction must not invoke legacy")
-        })
-        .unwrap();
-        assert_eq!(selected.session(), &exact);
-        if legacy.session() == &exact {
+        if legacy.session() == preferred.session() {
             continue;
         }
         let previous_bytes = serde_json::to_vec(legacy.session()).unwrap();
@@ -674,89 +915,62 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
         fs::write(&path, &previous_bytes).unwrap();
         let previous: DailySessionEvidenceV1Wire =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-        let calls = Cell::new(0);
-        let matched = select_reconstructed_sealed_session(
-            &previous,
-            discover_session_sources(&snapshots, &request()).map_err(AdmissionError::Evidence),
-            || {
-                calls.set(calls.get() + 1);
-                discover_session_sources_with_selection(
-                    &snapshots,
-                    &request(),
-                    CalendarSelection::LegacyHash,
-                )
-                .map_err(AdmissionError::Evidence)
-            },
-        )
-        .unwrap();
-        assert_eq!(calls.get(), 1);
-        assert_eq!(
-            serde_json::to_vec(matched.session()).unwrap(),
-            previous_bytes
-        );
-        assert_eq!(matched.evidence_preimage(), legacy.evidence_preimage());
-        let replay_request = request();
-        let indexed = IndexedSessionSources::new(
-            &snapshots,
-            replay_request.owner,
-            &replay_request.policy_sha256,
-            &mut |_, _| Ok(()),
-        )
-        .unwrap();
-        let indexed_exact = select_reconstructed_sealed_session(
-            &previous,
-            indexed
-                .discover(
-                    &replay_request,
-                    CalendarSelection::CurrentTargetPreferred,
-                    |_, _| Ok(()),
-                )
-                .map_err(AdmissionError::Evidence),
-            || {
-                indexed
+        let deliveries = sealed_calendar_deliveries(legacy.observation().files());
+        let replay = |snapshot: &RawEvidenceSnapshots<'_>,
+                      expected: &DailySessionEvidenceV1Wire| {
+            let index = IndexedSessionSources::new(
+                snapshot,
+                requested.owner,
+                &requested.policy_sha256,
+                &mut |_, _| Ok(()),
+            )
+            .map_err(AdmissionError::Evidence)?;
+            let verified = require_reconstructed_sealed_session(
+                expected,
+                index
                     .discover(
-                        &replay_request,
-                        CalendarSelection::LegacyHash,
+                        &requested,
+                        CalendarSelection::Sealed {
+                            bindings: &expected.calendar,
+                            deliveries: &deliveries,
+                        },
                         |_, _| Ok(()),
                     )
-                    .map_err(AdmissionError::Evidence)
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            indexed_exact.evidence_preimage(),
-            legacy.evidence_preimage()
-        );
-        assert_eq!(
-            indexed_exact.observation().preimage(),
-            legacy.observation().preimage()
-        );
-        super::super::candidate::validate_documents(
-            &previous.normalized_documents,
-            matched
-                .documents()
-                .iter()
-                .map(|document| (document.descriptor(), document.bytes())),
-        )
-        .unwrap();
+                    .map_err(AdmissionError::Evidence),
+            )?;
+            Ok::<_, AdmissionError>((
+                serde_json::to_vec(verified.session()).unwrap(),
+                verified.evidence_preimage().to_vec(),
+                verified.observation().preimage().to_vec(),
+                super::super::candidate::validate_documents(
+                    &expected.normalized_documents,
+                    verified
+                        .documents()
+                        .iter()
+                        .map(|doc| (doc.descriptor(), doc.bytes())),
+                ),
+            ))
+        };
+
+        let (wire, evidence, observation, documents) = replay(&snapshots, &previous).unwrap();
+        documents.unwrap();
+        assert_eq!(wire, previous_bytes);
+        assert_eq!(evidence, legacy.evidence_preimage());
+        assert_eq!(observation, legacy.observation().preimage());
+        let (wire, _, _, documents) = replay(&snapshots, preferred.session()).unwrap();
+        documents.unwrap();
+        assert_eq!(wire, serde_json::to_vec(preferred.session()).unwrap());
 
         let changed = self::fixture(id, Mutation::ChangedPrice, None);
         let changed_scopes = changed.read();
-        let changed_snapshots = context(&changed_scopes);
-        let refused = select_reconstructed_sealed_session(
-            &previous,
-            discover_session_sources(&changed_snapshots, &request())
-                .map_err(AdmissionError::Evidence),
-            || {
-                discover_session_sources_with_selection(
-                    &changed_snapshots,
-                    &request(),
-                    CalendarSelection::LegacyHash,
-                )
-                .map_err(AdmissionError::Evidence)
-            },
-        );
-        assert!(matches!(refused, Err(AdmissionError::InvalidCandidate)));
+        assert!(replay(&context(&changed_scopes), &previous).is_err());
+
+        let mut wrong_previous = previous.clone();
+        wrong_previous.bars[0].wire_sha256 = ContentHash::from_bytes(b"wrong-sealed-price");
+        assert!(matches!(
+            replay(&snapshots, &wrong_previous),
+            Err(AdmissionError::InvalidCandidate)
+        ));
 
         for (mutation, expected) in [
             (Mutation::CalendarConflict, Error::CalendarConflict),
@@ -769,13 +983,11 @@ fn current_calendar_raw_shared_compatibility_preserves_exact_previous_bytes() {
             let invalid = self::fixture(id, mutation, None);
             let invalid_scopes = invalid.read();
             let invalid_snapshots = context(&invalid_scopes);
-            let refused = select_reconstructed_sealed_session(
-                &previous,
-                discover_session_sources(&invalid_snapshots, &request())
-                    .map_err(AdmissionError::Evidence),
-                || panic!("a preferred discovery error must never invoke legacy"),
+            assert_eq!(
+                discover_session_sources(&invalid_snapshots, &requested).err(),
+                Some(expected),
             );
-            assert!(matches!(refused, Err(AdmissionError::Evidence(error)) if error == expected));
+            assert!(replay(&invalid_snapshots, &previous).is_err());
         }
         exercised_legacy = true;
         break;
