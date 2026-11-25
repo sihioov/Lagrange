@@ -348,7 +348,7 @@ try {
   configText = replacement(configText, "listen 8443 ssl;", "listen unix:/qa/edge.sock ssl;");
   configText = replacement(configText, "/run/secrets/lagrange_tls_cert", "/qa/cert.pem");
   configText = replacement(configText, "/run/secrets/lagrange_tls_key", "/qa/key.pem");
-  configText = replacement(configText, "http://api-server:8080", "http://unix:/qa/api.sock:", 5);
+  configText = replacement(configText, "server api-server:8080 resolve;", "server unix:/qa/api.sock;", 1);
   configText = replacement(configText, "http://web:3000", "http://unix:/qa/web.sock:");
   configText = replacement(configText, "http {", "http {\n    access_log off;\n    client_body_temp_path /tmp/client_temp;\n    proxy_temp_path /tmp/proxy_temp;\n    fastcgi_temp_path /tmp/fastcgi_temp;\n    uwsgi_temp_path /tmp/uwsgi_temp;\n    scgi_temp_path /tmp/scgi_temp;");
   await writeFile(join(evidence, "nginx.conf"), configText, { flag: "wx", mode: 0o600 });

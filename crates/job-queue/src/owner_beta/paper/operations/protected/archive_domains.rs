@@ -12,6 +12,8 @@ use std::{
 const JOURNAL: &str = "paper_operations";
 #[path = "archive_lifecycle.rs"]
 mod lifecycle;
+#[path = "archive_serving.rs"]
+mod serving;
 
 const LIFECYCLE: &str = "paper_evidence/lifecycle";
 const RECEIPT_TABLES: &[&str] = &[
@@ -955,6 +957,7 @@ struct JournalIndex<'a> {
     rows: Vec<(&'a str, Value)>,
     operations: BTreeMap<String, usize>,
     callers: std::collections::BTreeSet<String>,
+    serving_stops: BTreeMap<String, String>,
     requests: BTreeMap<String, &'a [u8]>,
     objects: BTreeMap<String, &'a [u8]>,
     // Exact response text borrowed semantically from retained COMMITTED
@@ -969,6 +972,7 @@ impl<'a> JournalIndex<'a> {
             rows: Vec::new(),
             operations: BTreeMap::new(),
             callers: std::collections::BTreeSet::new(),
+            serving_stops: BTreeMap::new(),
             requests: BTreeMap::new(),
             objects: BTreeMap::new(),
             enclosed_results: BTreeMap::new(),
@@ -1035,6 +1039,26 @@ impl Domains {
         for name in self.children(callers) {
             let v = self.validate_caller(&format!("{callers}/{name}"), installation)?;
             let generation = v["generation"].as_str().ok_or(ErrorCode::WireInvalid)?;
+            if let Some(enable) = v["caller_key"]
+                .as_str()
+                .and_then(|key| key.strip_prefix("serving-failure:"))
+            {
+                let intent = historical_root(
+                    self.file(&format!("{JOURNAL}/operations/{generation}/intent.json"))?,
+                )?;
+                if intent.intent.purpose == "STOP" && intent.intent.scope == "PAPER_STOP" {
+                    index.charge(self, enable.len() + generation.len())?;
+                    if !uuid(&Value::String(enable.to_owned()))
+                        || !self.directory(&format!("{JOURNAL}/operations/{enable}"))
+                        || index
+                            .serving_stops
+                            .insert(enable.into(), generation.into())
+                            .is_some()
+                    {
+                        return Err(ErrorCode::IdentityConflict);
+                    }
+                }
+            }
             if !index.callers.contains(generation) {
                 index.charge(self, generation.len())?;
                 index.callers.insert(generation.to_owned());
@@ -1328,7 +1352,7 @@ impl Domains {
         if names.contains(&"callers") && !self.directory(&callers) {
             return Err(ErrorCode::IdentityConflict);
         }
-        let index = self.journal_index(&callers, installation)?;
+        let mut index = self.journal_index(&callers, installation)?;
         let operations = format!("{base}/operations");
         for generation in self.children(&operations) {
             if !uuid(&Value::String(generation.to_owned())) {
@@ -1359,6 +1383,7 @@ impl Domains {
                 }
             }
             let mut stages = StageChain::new(&root, floor)?;
+            let mut serving_originals = BTreeMap::new();
             stages.bound = bound;
             for name in self.children(&dir) {
                 if name == "intent.json" || name == "actions" {
@@ -1366,10 +1391,17 @@ impl Domains {
                 }
                 if let Some(hash) = named_digest(name) {
                     let bytes = self.file(&format!("{dir}/{name}"))?;
-                    wire::parse_canonical_limit(bytes, MAX_JOURNAL_MEMBER)
+                    let value = wire::parse_canonical_limit(bytes, MAX_JOURNAL_MEMBER)
                         .map_err(|_| ErrorCode::WireInvalid)?;
                     if digest_bytes(bytes) != hash {
                         return Err(ErrorCode::IdentityConflict);
+                    }
+                    if serving::is_serving(&value) {
+                        if bytes.len() > 65_536 || !bound {
+                            return Err(ErrorCode::IdentityConflict);
+                        }
+                        index.charge(self, bytes.len() * 16)?;
+                        serving::retain(&root, &mut serving_originals, hash, value)?;
                     }
                     continue;
                 }
@@ -1381,6 +1413,7 @@ impl Domains {
                 stages.observe(bytes)?;
                 self.copy_at(&dir, bytes)?;
             }
+            self.finish_serving(&root, generation, serving_originals, &index)?;
             let mut chain = ActionChain::new(&root);
             for name in self.children(&actions) {
                 if name != format!("{:08}", chain.sequence) {
@@ -5113,6 +5146,332 @@ mod tests {
                     .is_ok(),
                 mutant == 0,
                 "mutant {mutant}"
+            );
+        }
+    }
+
+    #[test]
+    fn serving_operation_originals_survive_native_archive_journal_admission() {
+        let f = fixtures();
+        let root_bytes = object(&f, "enable.root").as_bytes();
+        let root = wire::parse_root_intent(root_bytes).unwrap();
+        let canonical =
+            |v: &Value| crate::owner_beta::paper::source_evidence::canonical(v).unwrap();
+        let enable = &root.intent.value;
+        let generation = enable["generation"].as_str().unwrap();
+        let phase_path = format!("{JOURNAL}/operations/{generation}");
+        let docker = |byte: &str| {
+            serde_json::json!({"Id":byte.repeat(64),"Image":digest_bytes(b"image"),
+            "Created":"2026-11-01T00:00:00Z","StartedAt":"2026-11-01T00:00:01Z","RestartCount":0})
+        };
+        let start = serde_json::json!({"schema":"owner-beta-paper-serving-intent-v1",
+            "enable_generation":generation,"account_id":enable["account_id"],"expected_epoch":enable["expected_epoch"],
+            "release_manifest_sha256":enable["release_manifest_sha256"],"process_sha256":enable["artifact_sha256"],
+            "prior_api_generation":docker("a"),"prior_proxy_generation":docker("b"),
+            "prior_daily_generations":{},"installed_env_sha256":digest_bytes(b"env")});
+        let record = |phase, prior: Value, body: Value| {
+            canonical(&serde_json::json!({
+            "schema":"owner-beta-paper-serving-record-v1","root_intent_sha256":root.sha256,
+            "phase":phase,"prior_sha256":prior,"value":body}))
+        };
+        let setup = || {
+            let mut domains = Domains::new(1000, 16 * 1024 * 1024);
+            for dir in [
+                JOURNAL,
+                &format!("{JOURNAL}/operations"),
+                &format!("{JOURNAL}/callers"),
+                &phase_path,
+            ] {
+                lifecycle_dir(&mut domains, dir).unwrap();
+            }
+            lifecycle_file(
+                &mut domains,
+                &format!("{JOURNAL}/installation-id"),
+                format!("{}\n", root.intent.installation_id).as_bytes(),
+            );
+            lifecycle_file(&mut domains, &format!("{JOURNAL}/epoch-floor"), b"5\n");
+            lifecycle_file(
+                &mut domains,
+                &format!("{phase_path}/intent.json"),
+                root_bytes,
+            );
+            let raw = object(&f, "enable.caller").as_bytes();
+            let caller: Value = serde_json::from_slice(raw).unwrap();
+            let hash = digest_bytes(&canonical(
+                &serde_json::json!({"caller_key":caller["caller_key"],
+                "installation_id":caller["installation_id"],"account_id":caller["account_id"]}),
+            ));
+            lifecycle_file(
+                &mut domains,
+                &format!("{JOURNAL}/callers/{}.json", &hash[7..]),
+                raw,
+            );
+            domains
+        };
+        let append = |domains: &mut Domains, raw: &[u8]| {
+            let digest = digest_bytes(raw);
+            lifecycle_file(domains, &format!("{phase_path}/{}.json", &digest[7..]), raw);
+            serde_json::json!(digest)
+        };
+        let first = record("intent", Value::Null, start.clone());
+        let aborted = serde_json::json!({"native_outcome":"BLOCKED","native_cleanup":"COMPLETE"});
+        let retained = record(
+            "not-started",
+            serde_json::json!(digest_bytes(&first)),
+            aborted.clone(),
+        );
+        let mut domains = setup();
+        assert!(domains.finish_journal(&Value::Null, &Value::Null).is_ok()); // Existing archive.
+        append(&mut domains, &first);
+        append(&mut domains, &retained);
+        assert!(domains.finish_journal(&Value::Null, &Value::Null).is_ok());
+
+        let add_dispatch = |domains: &mut Domains, dir: &str, dispatch: &[u8], result: &[u8]| {
+            let value: Value = serde_json::from_slice(dispatch).unwrap();
+            let actions = format!("{dir}/actions");
+            let action = format!("{actions}/00000000");
+            let output = format!("{action}/output");
+            for path in [&actions, &action, &output] {
+                lifecycle_dir(domains, path).unwrap();
+            }
+            lifecycle_file(domains, &format!("{output}/dispatch.json"), dispatch);
+            lifecycle_file(
+                domains,
+                &format!("{action}/binding.json"),
+                value["action_canonical"].as_str().unwrap().as_bytes(),
+            );
+            if let Some(raw) = value["artifact_canonical"].as_str() {
+                lifecycle_file(domains, &format!("{action}/evidence.json"), raw.as_bytes());
+            }
+            for raw in [
+                "root_intent_canonical",
+                "action_canonical",
+                "artifact_canonical",
+                "sql_request_canonical",
+            ]
+            .iter()
+            .filter_map(|key| value[*key].as_str().map(str::as_bytes))
+            .chain([result])
+            {
+                lifecycle_file(
+                    domains,
+                    &format!("{output}/{}.json", &digest_bytes(raw)[7..]),
+                    raw,
+                );
+            }
+        };
+        let add_row = |domains: &mut Domains, table: &str, row: &Value| {
+            domains
+                .observe(ArchiveOriginalMember::Database {
+                    group: "paper",
+                    table,
+                    key: "fixture",
+                    canonical_row: &canonical(row),
+                })
+                .unwrap();
+        };
+        let mut attended = setup();
+        let sql = object(&f, "enable.action0.sql");
+        let outcome = object(&f, "enable.result");
+        let page: Value = serde_json::from_str(outcome).unwrap();
+        let activation_event = &page["data"]["event_id"];
+        let enable_epoch = page["control_epoch"].as_i64().unwrap();
+        add_dispatch(
+            &mut attended,
+            &phase_path,
+            object(&f, "enable.action0.dispatch").as_bytes(),
+            outcome.as_bytes(),
+        );
+        add_row(
+            &mut attended,
+            RECEIPT_TABLES[2],
+            &serde_json::json!({
+                "account_id":enable["account_id"],"id":activation_event,"kind":"ENABLED",
+                "control_epoch":enable_epoch,"request_key":enable["request_key"],
+                "payload":serde_json::from_str::<Value>(object(&f,"enable.payload")).unwrap(),
+                "request_canonical":sql,"request_sha256":digest_bytes(sql.as_bytes()),
+                "result_canonical":outcome,"result_sha256":digest_bytes(outcome.as_bytes())
+            }),
+        );
+        let mut tail = append(&mut attended, &first);
+        for (phase, body) in [
+            (
+                "enabled",
+                serde_json::json!({"generation":generation,"account":enable["account_id"],
+                "epoch":enable_epoch,"event":activation_event,"manifest":enable["release_manifest_sha256"],
+                "process":enable["artifact_sha256"]}),
+            ),
+            (
+                "creating",
+                serde_json::json!({"mounts_sha256":{"api-server":digest_bytes(b"api"),
+                "paper-scheduler":digest_bytes(b"scheduler")}}),
+            ),
+            (
+                "created",
+                serde_json::json!({"container_ids":{"api-server":"c".repeat(64),
+                "paper-scheduler":"d".repeat(64)}}),
+            ),
+            (
+                "paper-scheduler",
+                serde_json::json!({"generation":docker("d")}),
+            ),
+        ] {
+            tail = append(&mut attended, &record(phase, tail, body));
+        }
+        let mut stop: Value = serde_json::from_str(object(&f, "stop.root")).unwrap();
+        stop["expected_epoch"] = serde_json::json!(enable_epoch);
+        stop["local_epoch_floor"] = serde_json::json!(enable_epoch);
+        stop["release_manifest_sha256"] = enable["release_manifest_sha256"].clone();
+        let stop_dir = format!(
+            "{JOURNAL}/operations/{}",
+            stop["generation"].as_str().unwrap()
+        );
+        let stop_bytes = canonical(&stop);
+        let stop_digest = digest_bytes(&stop_bytes);
+        lifecycle_dir(&mut attended, &stop_dir).unwrap();
+        lifecycle_file(
+            &mut attended,
+            &format!("{stop_dir}/intent.json"),
+            &stop_bytes,
+        );
+        let mut command = stop.clone();
+        for field in ["generation", "request_key"] {
+            command.as_object_mut().unwrap().remove(field);
+        }
+        let mut caller = serde_json::json!({"caller_key":format!("serving-failure:{generation}"),
+            "installation_id":stop["installation_id"],"account_id":stop["account_id"]});
+        let caller_digest = digest_bytes(&canonical(&caller));
+        caller["schema"] = serde_json::json!("owner-beta-paper-caller-binding-v1");
+        caller["generation"] = stop["generation"].clone();
+        caller["root_intent_sha256"] = serde_json::json!(stop_digest);
+        caller["command_canonical"] =
+            serde_json::json!(String::from_utf8(canonical(&command)).unwrap());
+        lifecycle_file(
+            &mut attended,
+            &format!("{JOURNAL}/callers/{}.json", &caller_digest[7..]),
+            &canonical(&caller),
+        );
+        let as_text = |v: &Value| String::from_utf8(canonical(v)).unwrap();
+        let mut stage0: Value = serde_json::from_str(object(&f, "stop.stage0")).unwrap();
+        stage0["intent_sha256"] = serde_json::json!(stop_digest);
+        stage0["control_epoch"] = serde_json::json!(enable_epoch);
+        let stage0_hash = digest_bytes(&canonical(&stage0));
+        let mut binding: Value = serde_json::from_str(object(&f, "stop.action0")).unwrap();
+        binding["root_intent_sha256"] = serde_json::json!(stop_digest);
+        binding["expected_epoch"] = serde_json::json!(enable_epoch);
+        binding["stage_sha256"] = serde_json::json!(stage0_hash);
+        let mut begin: Value = serde_json::from_str(object(&f, "stop.action0.sql")).unwrap();
+        begin["args"]["intent_canonical"] = serde_json::json!(as_text(&stop));
+        begin["args"]["expected_epoch"] = serde_json::json!(enable_epoch);
+        let mut dispatch: Value =
+            serde_json::from_str(object(&f, "stop.action0.dispatch")).unwrap();
+        for (key, value) in [
+            ("root_intent", &stop),
+            ("action", &binding),
+            ("sql_request", &begin),
+        ] {
+            dispatch[format!("{key}_canonical")] = serde_json::json!(as_text(value));
+            dispatch[format!("{key}_sha256")] = serde_json::json!(digest_bytes(&canonical(value)));
+        }
+        let mut result: Value = serde_json::from_str(object(&f, "stop.begin-result")).unwrap();
+        result["control_epoch"] = serde_json::json!(enable_epoch + 1);
+        result["data"]["fenced_epoch"] = serde_json::json!(enable_epoch + 1);
+        result["data"]["intent_sha256"] = serde_json::json!(stop_digest);
+        let mut stage1: Value = serde_json::from_str(object(&f, "stop.stage1")).unwrap();
+        stage1["intent_sha256"] = serde_json::json!(stop_digest);
+        stage1["control_epoch"] = serde_json::json!(enable_epoch + 1);
+        stage1["previous_sha256"] = serde_json::json!(stage0_hash);
+        stage1["artifact_sha256"] = serde_json::json!(digest_bytes(&canonical(&result)));
+        add_dispatch(
+            &mut attended,
+            &stop_dir,
+            &canonical(&dispatch),
+            &canonical(&result),
+        );
+        for (i, value) in [stage0, stage1].iter().enumerate() {
+            let raw = canonical(value);
+            lifecycle_file(&mut attended, &format!("{stop_dir}/{i:08}.json"), &raw);
+            lifecycle_file(
+                &mut attended,
+                &format!("{stop_dir}/{}.json", &digest_bytes(&raw)[7..]),
+                &raw,
+            );
+        }
+        let mut row = stop.clone();
+        row["intent"] = stop.clone();
+        row["intent_sha256"] = serde_json::json!(stop_digest);
+        row["fence_epoch"] = serde_json::json!(enable_epoch + 1);
+        row["prior_state"] = serde_json::json!("ENABLED");
+        row["fence_event_id"] = result["data"]["operation_event_id"].clone();
+        row["request_canonical"] = serde_json::json!(as_text(&begin));
+        row["request_sha256"] = serde_json::json!(digest_bytes(&canonical(&begin)));
+        row["result_canonical"] = serde_json::json!(as_text(&result));
+        row["result_sha256"] = serde_json::json!(digest_bytes(&canonical(&result)));
+        add_row(&mut attended, RECEIPT_TABLES[0], &row);
+        tail = append(
+            &mut attended,
+            &record(
+                "stop-intent",
+                tail,
+                serde_json::json!({
+            "generation":stop["generation"],"intent_sha256":stop_digest}),
+            ),
+        );
+        let failure = record(
+            "failed",
+            tail,
+            serde_json::json!({
+                "state":"FENCED_DRAINING","enable_generation":generation,
+                "fence":{"generation":stop["generation"],"epoch":enable_epoch+1,
+                         "event_id":row["fence_event_id"]}
+            }),
+        );
+        assert_eq!(
+            attended.finish_journal(&Value::Null, &Value::Null),
+            Err(ErrorCode::IdentityConflict)
+        );
+        append(&mut attended, &failure);
+        assert_eq!(attended.finish_journal(&Value::Null, &Value::Null), Ok(()));
+
+        for variant in ["missing", "wrong-root", "unknown", "tampered", "fork"] {
+            let mut domains = setup();
+            let mut start = start.clone();
+            if variant == "wrong-root" {
+                start["process_sha256"] = serde_json::json!(digest_bytes(b"different process"));
+            }
+            let raw = record("intent", Value::Null, start);
+            let hash = serde_json::json!(digest_bytes(&raw));
+            if variant != "missing" {
+                append(&mut domains, &raw);
+            }
+            let terminal = if variant == "unknown" {
+                "implicit-start-authority"
+            } else {
+                "not-started"
+            };
+            let raw = record(terminal, hash.clone(), aborted.clone());
+            append(&mut domains, &raw);
+            if variant == "fork" {
+                let fork = record(
+                    "failed",
+                    hash,
+                    serde_json::json!({"state":"UNKNOWN",
+                    "fence":null,"enable_generation":generation}),
+                );
+                append(&mut domains, &fork);
+            }
+            if variant == "tampered" {
+                let path = format!("{phase_path}/{}.json", &digest_bytes(&raw)[7..]);
+                domains.members.get_mut(&path).unwrap().bytes = Some(record(
+                    "not-started",
+                    serde_json::json!(digest_bytes(&first)),
+                    serde_json::json!({"native_outcome":"OK","native_cleanup":"COMPLETE"}),
+                ));
+            }
+            assert_eq!(
+                domains.finish_journal(&Value::Null, &Value::Null),
+                Err(ErrorCode::IdentityConflict),
+                "{variant}"
             );
         }
     }

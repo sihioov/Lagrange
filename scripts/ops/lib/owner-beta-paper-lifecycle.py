@@ -15,6 +15,7 @@ import importlib.util
 import itertools
 import os
 from pathlib import Path
+import signal
 import stat
 import sys
 import time
@@ -41,13 +42,23 @@ _CALLS = weakref.WeakSet()
 _UNRESOLVED = []
 
 class LifecycleError(Exception):
-    def __init__(self, code, *, result=None):
+    def __init__(self, code, *, result=None, serving_generation=None):
         self.code, self.result = code, result
+        self.serving_generation = serving_generation
         super().__init__(code)
 
 def require(value, code="LIFECYCLE_INPUT"):
     if not value:
         raise LifecycleError(code)
+
+
+def report_error(error):
+    print(error.code, file=sys.stderr)
+    if error.serving_generation is not None:
+        journal._uuid(error.serving_generation)
+        print("PAPER_SERVING_GENERATION " + error.serving_generation, file=sys.stderr)
+    return 4 if error.code in ("CLEANUP_UNKNOWN", "PAPER_SERVING_START_FAILED_UNKNOWN",
+                              "PAPER_SERVING_START_FAILED_DRAINING_JOURNAL_INCOMPLETE") else 3
 
 @dataclasses.dataclass(frozen=True)
 class LifecycleResult:
@@ -502,6 +513,9 @@ class Lifecycle:
         self.journal = None
         self.actions, self.operations, self.imports, self.calls = [], [], [], []
         self.last = None
+        self._enable_dispatch = None
+        self._enable_plan = None
+        self._prior_enable_dispatch = None
         self.pending_anchors = []
         self.closed = False
     def revalidate(self):
@@ -623,9 +637,16 @@ class Lifecycle:
             return self._read_custody(custody)
         require(store.epoch_floor == epoch, "LIFECYCLE_FLOOR")
         require(not self.store.pending_at_open, "CLEANUP_UNKNOWN")
-        result = self._run(_Call(self, verb, action=action, selection=selection, anchors=anchors))
+        if verb == "enable" and self._enable_plan is not None:
+            self._enable_plan(operation.generation, account, epoch, raw)
+        try:
+            result = self._run(_Call(self, verb, action=action, selection=selection, anchors=anchors))
+        finally:
+            # Retain the original even if dispatch acknowledgement was lost.
+            candidates = [c for c in self.imports if getattr(c, "_action", None) is action]
+            if verb == "enable" and candidates:
+                self._enable_dispatch = (operation.generation, raw, candidates[-1]._sql)
         # Every actual dispatched mutation gets an independent exact readback.
-        candidates = [c for c in self.imports if getattr(c, "_action", None) is action]
         if candidates:
             checked = self._read_custody(candidates[-1])
             outcome = result.outcome
@@ -776,8 +797,10 @@ class Lifecycle:
             return None
         custody = action.import_dispatch()
         self.imports.append(custody)
+        self._prior_enable_dispatch = (operation.generation, custody._artifact, custody._sql)
         return self._read_custody(custody)
     def enable(self, caller_key):
+        self._enable_dispatch = None
         prior = self._prior_enable(caller_key)
         if prior is not None:
             return prior
@@ -911,12 +934,14 @@ def main(argv=None):
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--caller-key")
     parser.add_argument("--proposal")
+    parser.add_argument("--witness-binding")
     parser.add_argument("--generation")
     parser.add_argument("--sequence", type=int, default=0)
     args = parser.parse_args(argv)
     release_root = str(Path(__file__).resolve().parents[3])
     commit = Path(release_root).name
     require(daily.install.is_commit(commit), "LIFECYCLE_RELEASE")
+    require((args.command == "enable") == (args.witness_binding is not None), "LIFECYCLE_ARGUMENTS")
     with _locked_context(args.install_root, release_root, commit) as (context, lock):
         with contextlib.ExitStack() as stack:
             raw = None
@@ -929,12 +954,22 @@ def main(argv=None):
                 raw = proposal.raw
             else:
                 require(args.proposal is None, "LIFECYCLE_ARGUMENTS")
-            with open_lifecycle(context, lock, deadline=time.monotonic_ns() + 90_000_000_000) as owner:
-                if args.command == "configure": result = owner.configure(args.caller_key, raw)
-                elif args.command == "recover": result = owner.recover(args.caller_key, raw)
-                elif args.command == "enable": result = owner.enable(args.caller_key)
-                elif args.command == "observe-reset": result = owner.observe_reset()
-                else: result = owner.readback(args.generation, args.sequence)
+            if args.command == "enable":
+                require(args.generation is None and args.sequence == 0, "LIFECYCLE_ARGUMENTS")
+                serving = _load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+                def terminated(_signal, _frame):
+                    raise LifecycleError("PAPER_SERVING_INTERRUPTED")
+                previous = signal.signal(signal.SIGTERM, terminated)
+                try:
+                    result = serving.serve(sys.modules[__name__], context, lock, args.caller_key, args.witness_binding)
+                finally:
+                    signal.signal(signal.SIGTERM, previous)
+            else:
+                with open_lifecycle(context, lock, deadline=time.monotonic_ns() + 90_000_000_000) as owner:
+                    if args.command == "configure": result = owner.configure(args.caller_key, raw)
+                    elif args.command == "recover": result = owner.recover(args.caller_key, raw)
+                    elif args.command == "observe-reset": result = owner.observe_reset()
+                    else: result = owner.readback(args.generation, args.sequence)
     # Only finite descriptive state is printed; original private bytes stay local.
     print("PAPER_LIFECYCLE_" + result.outcome + ":" + result.cleanup)
     return {"OK": 0, "REPLAY": 0, "BLOCKED": 3, "COMMIT_UNKNOWN": 4}[result.outcome]
@@ -944,8 +979,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except LifecycleError as error:
-        print(error.code, file=sys.stderr)
-        raise SystemExit(4 if error.code == "CLEANUP_UNKNOWN" else 3)
+        raise SystemExit(report_error(error))
     except Exception:
         print("PAPER_LIFECYCLE_REJECTED", file=sys.stderr)
         raise SystemExit(3)

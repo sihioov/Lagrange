@@ -728,11 +728,18 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
   component "job-queue paper::operations\nprivate protected / bound / chain / wire\nRECONCILE/OFF guarded native path\nRECOVER retained source; RESTORE_OFF source wired\nENABLE readiness false; runtime acceptance OPEN" as paper_ops_native
   component "protected/archive_sandbox.rs\nno-new-privileges + TSYNC seccomp guard\nin-process restriction; not host isolation" as paper_ops_archive_sandbox
   component "owner-beta-paper-lifecycle.py\nCONFIGURE / RESET / ENABLE / RECOVER / readback\nretained owners; readiness remains false" as paper_host_lifecycle
+  component "owner-beta-paper-serving.py\nexact ENABLE readback and epoch floor\nstart paired consumers or fence failed start" as paper_serving_handoff
   folder "Lifecycle query / selection / anchor originals\n.owner-beta-paper-lifecycle; root-private\nstaging excluded from durable history" as paper_lifecycle_originals
   artifact "Temporary native historical view\nroot-owned 0700 / 0600; fixed RO alias\noriginal worker material retained" as paper_native_base_view
 }
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:5088-5105
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
+' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:955-972; scripts/ops/lib/owner-beta-paper-serving.py:722-794
+paper_host_lifecycle --> paper_serving_handoff : closed native gate; actual fresh success required
+' evidence: scripts/ops/lib/owner-beta-paper-serving.py:567-629; scripts/ops/lib/owner-beta-paper-backup.py:3750-3810,4004-4017
+paper_serving_handoff --> paper_ops_python : original STOP fence; explicit attended combined selection
+' evidence: scripts/ops/lib/owner-beta-paper-serving.py:92-188; scripts/ops/lib/owner-beta-paper-journal.py:1609-1620
+paper_serving_handoff --> paper_ops_journal : retain serving phase originals with the ENABLE operation
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:172-182,185-209
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1338-1341,1348-1366
@@ -843,6 +850,8 @@ paper_archive_capture --> paper_archive_decoder : consumed audit stream and v2 c
 paper_lifecycle_originals --> paper_archive_inputs : retain immutable sibling history in existing paper_evidence class; omit staging
 ' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2077-2133,3402-3405; crates/job-queue/src/owner_beta/paper/operations/protected/archive_lifecycle.rs:19-139,219-248
 paper_archive_domains --> paper_archive_lifecycle : lifecycle originals and v2 ARMED evidence
+' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:1062-1068; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:1383-1416; crates/job-queue/src/owner_beta/paper/operations/protected/archive_serving.rs:254-367
+paper_ops_originals --> paper_archive_domains : archive checks descriptive serving and STOP lineage
 note bottom of paper_archive_capture
   A+B source graph is connected through the in-process archive guard, archive intake, full Domains/material checks,
   destination custody, fresh candidate verification, cleanup, source SNAPSHOT and publication.

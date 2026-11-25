@@ -603,7 +603,7 @@ fi
   [ -s "$stage/docs/contracts/owner-beta-paper-audit-projection-v1.json" ] ||
   die 'Paper capability requires the final audit SQL and projection inputs'
 # Verify the actual archived host entry and its consumers before publication.
-for paper_source in owner-beta-paper-lifecycle.py owner-beta-paper-operations.py \
+for paper_source in owner-beta-paper-lifecycle.py owner-beta-paper-serving.py owner-beta-paper-operations.py \
   owner-beta-paper-evidence.py owner-beta-daily-base.py; do
   [ -s "$stage/scripts/ops/lib/$paper_source" ] && [ ! -L "$stage/scripts/ops/lib/$paper_source" ] ||
     die 'Paper lifecycle host source missing from immutable release'
