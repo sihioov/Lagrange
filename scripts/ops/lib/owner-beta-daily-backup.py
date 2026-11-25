@@ -916,6 +916,9 @@ class SimulationStorage(Storage):
         return simulation.verify_simulation_archive(stream, self.limits, self.simulation_binding,
                                                      profile=profile)
 
+    def verify_daily_archive_references(self, manifest, database):
+        files.database_references(manifest, database)
+
     def __init__(self, values, docker, context, binding, *, tool_commit, tool_hash, verifier_root=None):
         require(bool(context.values["POSTGRES_DB"]), "DAILY_BACKUP_DATABASE")
         database = ops.database_name(context.values)
@@ -1030,7 +1033,7 @@ class SimulationStorage(Storage):
                 if combined:
                     daily_database, sim_digest = actual
                     require(daily_database == state["daily_database"], "DAILY_BACKUP_RESTORED_DATABASE")
-                    files.database_references(manifest, daily_database)
+                    self.verify_daily_archive_references(manifest, daily_database)
                 else:
                     sim_digest = actual
                 require(sim_digest == state["database_sha256"], "DAILY_BACKUP_RESTORED_DATABASE")
@@ -1391,6 +1394,10 @@ class NightlyDailySimulationStorage(SimulationStorage):
         return verify_bound_combined_archive(stream, self.limits, self.simulation_binding,
                                              profile=profile)
 
+    def verify_daily_archive_references(self, manifest, database):
+        pending = files.database_references(manifest, database, nightly=self.nightly)
+        require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
+
     def augment_simulation_state(self, state):
         require(state["profile"] == "daily-simulation", "DAILY_BACKUP_NIGHTLY_BINDING")
         nightly_combined_binding(state["daily_database"], self.daily_config, self.expected_date, self.nightly)
@@ -1583,9 +1590,10 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
             with simulation_snapshot(operation.binding, operation.install_root, storage.limits,
                     data_root=backup["DATA_ROOT"], daily_roots=roots(binding, operation.install_root)) as snapshot:
                 require(audit() == before, "DAILY_BACKUP_SOURCE_DATABASE_CHANGED")
-                pending = files.database_references(json.loads(snapshot.manifest()), before[0])
                 if nightly_combined:
-                    require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
+                    storage.verify_daily_archive_references(json.loads(snapshot.manifest()), before[0])
+                else:
+                    files.database_references(json.loads(snapshot.manifest()), before[0])
                 source, final, name = staging.enter_context(storage.capture_simulation(
                     snapshot, before[1], before[0], "daily-simulation"))
                 unchanged()

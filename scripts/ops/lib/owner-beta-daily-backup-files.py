@@ -740,7 +740,7 @@ def restore_archive(source, limits, destination, reserve=lambda _: None, *, prof
     return manifest
 
 
-def database_references(manifest, database):
+def database_references(manifest, database, *, nightly=None):
     """Bind verified archive entries to the fixed SQL audit's exact file pins.
 
     This proves byte/reference consistency, not independent source admission.
@@ -754,10 +754,17 @@ def database_references(manifest, database):
     control = database["control"]
     require(isinstance(control, dict) and set(control) == {
         "owner_user_id", "policy_sha256", "activation_epoch", "first_auto_session",
-        "trigger_version", "enabled"} and control["enabled"] is False,
-            "DAILY_BACKUP_DATABASE_ENABLED")
+        "trigger_version", "enabled"}, "DAILY_BACKUP_DATABASE_SHAPE")
+    schemas = {"lagrange-daily-files-v1", "lagrange-daily-simulation-files-v1"}
+    if nightly is None:
+        require(control["enabled"] is False, "DAILY_BACKUP_DATABASE_ENABLED")
+    else:
+        require(type(nightly) is tuple and len(nightly) == 2
+                and type(nightly[0]) is bool and type(nightly[1]) is int and 1 <= nightly[1] < 2**63
+                and control["enabled"] is nightly[0] and control["activation_epoch"] == nightly[1],
+                "DAILY_BACKUP_NIGHTLY_BINDING")
     require(isinstance(manifest, dict) and manifest.get("schema") in
-            {"lagrange-daily-files-v1", "lagrange-daily-simulation-files-v1"}
+            schemas
             and isinstance(manifest.get("entries"), list))
     records = {entry["path"]: entry for entry in manifest["entries"]}
     require(len(records) == len(manifest["entries"]), "DAILY_BACKUP_DATABASE_SHAPE")
