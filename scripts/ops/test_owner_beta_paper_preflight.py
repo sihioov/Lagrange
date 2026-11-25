@@ -2,21 +2,28 @@
 
 import contextlib
 import copy
+import importlib.util
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import types
 import unittest
 from unittest import mock
 
-from scripts.ops.test_owner_beta_paper_release import COMMIT, ROOT, manifest_fixture, release
-
-
+ROOT = Path(__file__).resolve().parents[2]
+MODULE = ROOT / "scripts/ops/lib/owner-beta-paper-release.py"
+SPEC = importlib.util.spec_from_file_location("owner_beta_paper_preflight_release_test", MODULE)
+assert SPEC is not None and SPEC.loader is not None
+release = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = release
+SPEC.loader.exec_module(release)
 ops = release._daily_operations()
 preflight = ops.load_local("paper_preflight_test", "owner-beta-paper-preflight.py")
+COMMIT = "a1" * 20
 DATA = "/var/lib/lagrange-paper-fixture/data"
 ARTIFACTS = "/var/lib/lagrange-paper-fixture/artifacts"
 SECRETS = "/var/lib/lagrange-paper-fixture/secrets"
@@ -48,8 +55,8 @@ class PaperProcessPreflightTests(unittest.TestCase):
                       LAGRANGE_ARTIFACTS_DIR=ARTIFACTS, LAGRANGE_RUNTIME_SECRET_DIR=SECRETS,
                       OWNER_BETA_PAPER_MODE="disabled")
         self.env_path.write_text("".join(f"{k}={v}\n" for k, v in values.items()))
-        manifest, self.images = manifest_fixture()
-        self.manifest_sha = release._digest(manifest)
+        self.images = {"api-server": "sha256:" + "2" * 64, "paper-scheduler": "sha256:" + "3" * 64}
+        self.manifest_sha = release._digest(b"fixture-manifest")
         self.mounts = preflight.mounts(self.release, DATA, ARTIFACTS)
         self.bind_options = preflight.no_create_options(self.environment, release._fail)
 
