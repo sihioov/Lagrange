@@ -1361,12 +1361,15 @@ class FixtureOwner:
                   "LAGRANGE_ARTIFACTS_DIR": str(self.root / "artifacts"),
                   "LAGRANGE_RUNTIME_SECRET_DIR": str(self.root / "secrets"), "POSTGRES_DB": "lagrange",
                   "OWNER_BETA_DAILY_MODE": "disabled", "OWNER_BETA_PAPER_MODE": "disabled"}
+        if getattr(self, "off_consent_preparation", False):
+            values["OWNER_BETA_ACCESS_MODE"] = "owner_only"
+            values["OWNER_BETA_PAPER_OFF_CONSENT_ENABLED"] = "true"
         return "".join(k + "=" + v + "\n" for k, v in values.items()).encode()
 
-    def setup(self, policy_root, *, _prepare_release=None, migration_stop=71):
+    def setup(self, policy_root, *, _prepare_release=None, migration_stop=72):
         # migration_stop=66 leaves the owned database at 0065 (pre-Paper). Such a database has no
         # INSPECT ABI, so the initial native history probe below is not run for it.
-        require(migration_stop in (66, 71) and (migration_stop == 71 or _prepare_release is None),
+        require(migration_stop in (66, 72) and (migration_stop == 72 or _prepare_release is None),
                 "FIXTURE_MIGRATION_INVENTORY")
         self.pg_image = ops._database_image_id(self.docker)
         self.lock_fd = os.open(self.root / ops.LOCK_NAME, os.O_CREAT | os.O_EXCL | os.O_RDWR |
@@ -1461,7 +1464,7 @@ class FixtureOwner:
         images = ops.daily.read_manifest(str(self.release), self.commit)
         actual_values, overlays = ops.daily.read_context(str(self.release), self.commit, "disable")
         self.context = ops.daily.Context(str(self.release), self.commit, images, actual_values, overlays)
-        if migration_stop != 71:
+        if migration_stop != 72:
             return
         with ops.open_context(self.context, self.lock_fd) as live:
             self.contexts.append(live)
@@ -1469,13 +1472,13 @@ class FixtureOwner:
                 require(inventory._configured is False and inventory._history is False,
                         "FIXTURE_INITIAL_NOT_EMPTY")
 
-    def _setup_database(self, migration_root, password, *, migration_stop=71):
+    def _setup_database(self, migration_root, password, *, migration_stop=72):
         """Actual private DB owner; called once, never a prepared-state receipt.
 
-        The release must carry exactly migrations 0001..0070. Versions below migration_stop are
-        applied: 71 is the full schema, 66 is the pre-Paper 0065 schema.
+        The release must carry exactly migrations 0001..0071. Versions below migration_stop are
+        applied: 72 is the full schema, 66 is the pre-Paper 0065 schema.
         """
-        require(migration_stop in (66, 71), "FIXTURE_MIGRATION_INVENTORY")
+        require(migration_stop in (66, 72), "FIXTURE_MIGRATION_INVENTORY")
         require(self.observer is None and self.network is None and self.pg is None
                 and not self.network_sent and not self.pg_sent, "FIXTURE_INITIAL_NOT_EMPTY")
         self.network_sent = True
@@ -1524,9 +1527,9 @@ class FixtureOwner:
                "installed_on timestamptz NOT NULL DEFAULT now(),success boolean NOT NULL,"
                "checksum bytea NOT NULL,execution_time bigint NOT NULL);", "migration_owner")
         self._apply_migrations(migration_root, range(1, migration_stop))
-        if migration_stop == 71:
+        if migration_stop == 72:
             # Statement statistics are created after the last migration, as for every lifecycle
-            # case. The pre-Paper case reads none and later applies the remaining migrations itself.
+            # case. The pre-Paper case reads none and later applies 0066..0071 itself.
             pg.sql("CREATE EXTENSION pg_stat_statements;")
 
     def start_pre_paper_source_api(self, source_commit, image, target_image, derived):
@@ -1735,9 +1738,9 @@ class FixtureOwner:
     def _apply_migrations(self, migration_root, versions):
         """The existing sqlx-shaped loop for one contiguous version range of the release."""
         migrations = sorted((migration_root / "migrations").glob("*.up.sql"))
-        require([int(path.name[:4]) for path in migrations] == list(range(1, 71))
+        require([int(path.name[:4]) for path in migrations] == list(range(1, 72))
                 and type(versions) is range and versions.step == 1
-                and 1 <= versions.start < versions.stop <= 71, "FIXTURE_MIGRATION_INVENTORY")
+                and 1 <= versions.start < versions.stop <= 72, "FIXTURE_MIGRATION_INVENTORY")
         pg = self.observer
         for path in migrations[versions.start - 1:versions.stop - 1]:
             script = path.read_text()
@@ -2598,6 +2601,77 @@ class FixtureRunner:
             self.results.append({"case": "RESTORE_UNVERIFIED_ARCHIVE_REJECTED", "status": "PASS",
                                  "counters": after})
 
+    def off_consent_backup(self):
+        """Real app revocation, held floor advance and stock backup fence on an owned DB."""
+        if lifecycle_subset_manifest(self.manifest):
+            self.results.append({"case": "OFF_CONSENT_BACKUP", "status": "NOT_RUN",
+                                 "reason": "LIFECYCLE_SUBSET_PLACEHOLDER_IMAGES"})
+            return
+        self.deadline.action_phase()
+        owner = FixtureOwner(self.source, self.commit, self.manifest, self.deadline)
+        owner.off_consent_preparation = True
+        with owner.extractions:
+            try:
+                owner.setup(self.policy_root)
+                owner.configure()
+                paper = driver._paper_backup()
+                installed, _ = paper._application_context(owner.context)
+                with installed.journal.open_journal(str(owner.root), owner.lock_fd, bootstrap=True) as store:
+                    require(store.epoch_floor == 0, "FIXTURE_OFF_CONSENT_FLOOR")
+                pg = owner.observer
+                actor = str(uuid.UUID(pg.json("SELECT to_json(owner_user_id) FROM owner_beta_paper_control;",
+                                              role="migration_owner")))
+                account = str(uuid.UUID(owner.account))
+                contract = existing_json_macro(owner.release /
+                    "tests/integration/migration-contract/tests/paper_0067.rs", "financial_contract")
+                contract_id, contract_sha = contract["contract_id"], contract["contract_sha256"]
+                require(contract_id == "owner-beta-paper-v1-draft-1"
+                        and re.fullmatch(r"sha256:[0-9a-f]{64}", contract_sha), "FIXTURE_OFF_CONSENT_FLOOR")
+                for opt_in, epoch in (("true", 0), ("false", 1)):
+                    result = pg.json(
+                        f"BEGIN; SET LOCAL app.actor_user_id='{actor}'; "
+                        f"SELECT public.record_owner_beta_paper_consent_v1('{account}',0,'{contract_id}',"
+                        f"'{contract_sha}',{opt_in},'api-paper-consent:backup-{opt_in}'); COMMIT;",
+                        role="app")
+                    require(result["outcome"] == "OK" and result["control_epoch"] == epoch,
+                            "FIXTURE_OFF_CONSENT_FLOOR")
+
+                def observe(phase, event, _frame, context):
+                    if phase == "context" and event == "return" and context is not None:
+                        require(context.install_root == str(owner.root), "FIXTURE_OFF_CONSENT_FLOOR")
+                        owner.contexts.append(context)
+                        owner.context_modules[context] = installed
+
+                with faults.ProductionPhases({"context": installed.open_context}, observe, self.deadline.value):
+                    preflight = paper.run_locked(owner.context, owner.lock_fd, "preflight", 512)
+                    require(preflight.status == "PREFLIGHT", "FIXTURE_OFF_CONSENT_FLOOR")
+                    with installed.journal.open_journal(str(owner.root), owner.lock_fd) as store:
+                        require(store.epoch_floor == 0, "FIXTURE_OFF_CONSENT_FLOOR")
+                    try:
+                        # Stop the owned test after native OFF, before archive
+                        # publication. This exercises the same real backup prefix.
+                        paper.run_locked(owner.context, owner.lock_fd, "backup", 512)
+                    except paper.PaperBackupError as error:
+                        require(str(error) == "PAPER_BACKUP_LIMIT", "FIXTURE_OFF_CONSENT_FLOOR")
+                    else:
+                        raise FixtureError("FIXTURE_OFF_CONSENT_FLOOR")
+
+                with installed.journal.open_journal(str(owner.root), owner.lock_fd) as store:
+                    require(store.epoch_floor == 3, "FIXTURE_OFF_CONSENT_FLOOR")
+                require(pg.json("SELECT json_build_array(expected_epoch,local_epoch_floor,fence_epoch) "
+                                "FROM owner_beta_paper_operations;", role="migration_owner") == [1, 1, 2]
+                        and pg.json("SELECT json_build_array(state,control_epoch,consent_event_id) "
+                                    "FROM owner_beta_paper_control;", role="migration_owner") == ["OFF", 3, None]
+                        and pg.sql("SELECT count(*) FROM owner_beta_paper_events WHERE kind='CONSENT_REVOKED';",
+                                   role="migration_owner") == b"1", "FIXTURE_OFF_CONSENT_FLOOR")
+            finally:
+                self.deadline.cleanup_phase()
+                owner.dispose(lambda: None)
+                self.cleanups.append({"case": "OFF_CONSENT_BACKUP", **owner.cleanup})
+        self.results.append({"case": "OFF_CONSENT_BACKUP", "status": "PASS",
+                             "journal_epochs": [0, 1, 3], "revocations": 1,
+                             "archive": "NOT_PUBLISHED_LIMIT"})
+
     def backup_restart(self):
         """Real manually linked BEGIN from expired STOPPED, bounded before archive publication."""
         if lifecycle_subset_manifest(self.manifest):
@@ -3017,7 +3091,7 @@ class FixtureRunner:
 
         Production --apply stages the real D8 inputs and publishes against the 0065 database.
         It first proves absent-API refusal, then retries from the same source with its real D1 API
-        running. The fixture inspects the switched handoff and 0065/0069/0070 guards without starting D8.
+        running. The fixture inspects the switched handoff and 0065/0069/0070/0071 guards without starting D8.
         """
         if lifecycle_subset_manifest(self.manifest):
             # paper-lifecycle-fast builds only api-server and paper-scheduler. Its db-migrate is a
@@ -3438,16 +3512,22 @@ class FixtureRunner:
         # both schema guards and backup inventory.
         self._pre_paper_check(owner, "check-pre-paper")
         unchanged()
-        # 6. compose-release's migrations 0066..0069, then --check (state B, native INSPECT hosted
-        # by C) and the real backup adapter must agree: no floor, empty history.
-        owner._apply_migrations(owner.release, range(66, 70))
-        require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"69:69:t", "FIXTURE_PRE_PAPER_DATABASE")
-        self._pre_paper_check(owner, "check-paper-schema")
-        unchanged()
-        owner._apply_migrations(owner.release, range(70, 71))
-        require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == b"70:70:t", "FIXTURE_PRE_PAPER_DATABASE")
-        self._pre_paper_check(owner, "check-paper-schema")
-        unchanged()
+        # Follow the historical Paper schema and both current release migrations
+        # through the installed release's real schema and backup entry points.
+        start = 66
+        for version in (69, 70, 71):
+            owner._apply_migrations(owner.release, range(start, version + 1))
+            require(pg.sql(MIGRATION_STATE_SQL, "migration_owner") == f"{version}:{version}:t".encode("ascii"),
+                    "FIXTURE_PRE_PAPER_DATABASE")
+            originals = list((owner.release / "migrations").glob(f"{version:04d}_*.up.sql"))
+            require(len(originals) == 1, "FIXTURE_PRE_PAPER_DATABASE")
+            expected_checksum = hashlib.sha384(originals[0].read_bytes()).hexdigest().encode("ascii")
+            actual = pg.sql(f"SELECT encode(checksum,'hex') FROM public._sqlx_migrations WHERE version={version} AND success;",
+                            "migration_owner")
+            require(actual == expected_checksum, "FIXTURE_PRE_PAPER_DATABASE")
+            self._pre_paper_check(owner, f"check-paper-schema-{version:04d}")
+            unchanged()
+            start = version + 1
         backup = run_owned(backup_inventory_argv(install_root, str(target), commit, owner.lock_fd),
                            env=PRE_PAPER_ENV, timeout=self.deadline.seconds(300), pass_fds=(owner.lock_fd,))
         command_witness("backup-history-inventory", backup)
@@ -3458,7 +3538,7 @@ class FixtureRunner:
         return {"case": PRE_PAPER_CASE, "status": "PASS", "guard": "LEGACY_OFF",
                 "receipt_sha256": hashlib.sha256(receipt_bytes).hexdigest(),
                 "receipt_state": "PRE_PAPER", "receipt_migration_max": 65, "faults": faults,
-                "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS", "PAPER_SCHEMA_0070_PASS"], "backup": "LEGACY_EMPTY",
+                "checks": ["PRE_PAPER_0065_PASS", "PAPER_SCHEMA_0069_PASS", "R2_DAILY_SCHEMA_0070_PASS", "GENERIC_SCHEDULER_SCHEMA_0071_PASS"], "backup": "LEGACY_EMPTY",
                 "relabelled_images": len(derived), "paper_reader_floor": False, "paper_control_rows": 0,
                 "apply": "PUBLISHED_TRANSITION_REFUSED",
                 "apply_receipt_sha256": hashlib.sha256(apply_receipt_bytes).hexdigest(),
@@ -3467,6 +3547,7 @@ class FixtureRunner:
 
 
 _CLOSED_FIXTURE_CODES = frozenset({
+    "FIXTURE_OFF_CONSENT_FLOOR",
     "FIXTURE_BACKUP_RESTART_PREFIX", "FIXTURE_BACKUP_RESTART_REJECTION", "FIXTURE_BACKUP_RESTART_STOPPED",
     "FIXTURE_ARCHIVE_WITNESS", "FIXTURE_ARCHIVE_PUBLICATION",
     "FIXTURE_VERIFY_CHANGED_SOURCE", "FIXTURE_ARCHIVE_PREDECESSOR", "FIXTURE_ARCHIVE_RECONCILE",
@@ -3895,6 +3976,7 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
                         runner.fault(case)
                     runner.pre_paper_install()
                     runner.backup_restart()
+                    runner.off_consent_backup()
                     return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
             finally:
                 deadline.cleanup_phase()

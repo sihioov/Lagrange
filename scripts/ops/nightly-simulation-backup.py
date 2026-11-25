@@ -73,6 +73,7 @@ PREFLIGHT_COHORT = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_COHORT simulation=(ru
 PREFLIGHT_DAILY = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_DAILY_COHORT "
                             r"(enabled|disabled) api=(owner_only|disabled) epoch=([1-9][0-9]{0,18})")
 PREFLIGHT_UNTOUCHED = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_UNTOUCHED_SHA256 (sha256:[0-9a-f]{64})")
+PREFLIGHT_PAPER = re.compile(r"PREUPGRADE_BACKUP: NIGHTLY_PAPER CONFIGURED_OFF (sha256:[0-9a-f]{64})")
 PASS_LINES = {True: b"PREUPGRADE_BACKUP: PASS\n",
               False: (b"PREUPGRADE_BACKUP: resume-simulation: SKIPPED_NO_CAPTURED_WORKER\n"
                       b"PREUPGRADE_BACKUP: PASS simulation_worker=not_running_before_not_started\n")}
@@ -221,7 +222,7 @@ def run_child(argv, env, timeout, lock_fd):
 
 def preflight_result(code, data, *, combined=False):
     lines = rg.stdout_lines(data)
-    require(code == 0 and lines is not None and len(lines) == (6 if combined else 5)
+    require(code == 0 and lines is not None and len(lines) in ({6, 7} if combined else {5})
             and lines[-1] == "PREUPGRADE_BACKUP: PREFLIGHT", "NIGHTLY_CHILD_PREFLIGHT")
     formats = (PREFLIGHT_OBSERVER, PREFLIGHT_CONFIRMATIONS, PREFLIGHT_COHORT, PREFLIGHT_UNTOUCHED)
     values = []
@@ -240,6 +241,10 @@ def preflight_result(code, data, *, combined=False):
         result["daily_api"] = daily[2] == "owner_only"
         result["daily_epoch"] = int(daily[3])
         require(result["daily_epoch"] < 2**63, "NIGHTLY_CHILD_PREFLIGHT")
+        if len(lines) == 7:
+            paper = PREFLIGHT_PAPER.fullmatch(lines[5])
+            require(paper is not None, "NIGHTLY_CHILD_PREFLIGHT")
+            result.update(paper_configured_off=True, paper_origin=paper[1])
     return result
 
 
@@ -362,16 +367,39 @@ def progress_record(data, layout, config):
 
 def complete(record):
     combined = record.get("arguments", {}).get("backup_profile") == "daily-simulation"
+    configured_off = record.get("nightly", {}).get("paper_configured_off")
+    if configured_off is not None:
+        if not (combined and configured_off is True and record.get("nightly_paper_origin_unchanged") is True
+                and record.get("nightly_paper_origin") == record["nightly"].get("paper_preflight_origin")
+                and all(type(record.get(key)) is str and HASH.fullmatch(record[key])
+                        for key in ("nightly_paper_archive", "nightly_paper_origin"))):
+            return False
     steps = (*STEPS, DAILY_RESUME_STEP) if combined else STEPS
     return record.get("nightly_completed") is True and all(
         record["steps"].get(name) == {"state": "done", "code": None} for name in steps)
 
 
 def verify_recovery(progress, observation):
+    original = progress["nightly"]
+    if original.get("paper_configured_off") is True:
+        preflight_origin = original.get("paper_preflight_origin")
+        require(observation.get("paper_configured_off") is True and type(preflight_origin) is str
+                and HASH.fullmatch(preflight_origin) and observation.get("paper_origin") == preflight_origin,
+                "NIGHTLY_RECOVERY_COHORT")
+        if "backup" in progress["steps"]:
+            archive = progress.get("nightly_paper_archive")
+            require(progress["steps"]["backup"] == {"state": "done", "code": None}
+                    and type(archive) is str and HASH.fullmatch(archive)
+                    and progress.get("nightly_paper_origin") == preflight_origin, "NIGHTLY_PROGRESS")
+        else:
+            require(set(progress["steps"]) <= {"pause-observer", "stop-beta"}
+                    and "nightly_paper_archive" not in progress and "nightly_paper_origin" not in progress,
+                    "NIGHTLY_PROGRESS")
+        require(not progress["steps"] or progress.get("nightly_paper_origin_unchanged") is True,
+                "NIGHTLY_RECOVERY_REQUIRED")
     if not progress["steps"]:
         return
     require(complete(progress) or progress.get("nightly_recovered") is True, "NIGHTLY_RECOVERY_REQUIRED")
-    original = progress["nightly"]
     services = original.get("services")
     combined = progress.get("arguments", {}).get("backup_profile") == "daily-simulation"
     expected_services = set((*SERVICES, *DAILY_SERVICES) if combined else SERVICES)
@@ -379,6 +407,7 @@ def verify_recovery(progress, observation):
             and type(original.get("observer_timer_active")) is bool, "NIGHTLY_PROGRESS")
     if combined:
         require(type(original.get("daily_enabled")) is bool and type(original.get("daily_api")) is bool and
+                original.get("paper_configured_off") == observation.get("paper_configured_off") and
                 original["daily_enabled"] == observation.get("daily_enabled") and
                 original["daily_api"] == observation.get("daily_api") and
                 type(original.get("daily_epoch")) is int and type(observation.get("daily_epoch")) is int and
@@ -407,11 +436,16 @@ class Nightly:
                 "NIGHTLY_CURRENT")
         read_maintenance(self.config)
 
-    def child(self, mode, state_dir, confirmations, timeout):
+    def child(self, mode, state_dir, confirmations, timeout, *, observation=None):
         self.verify_pins()
         argv = ["/usr/bin/python3", "-I", "-S", "-B", self.entry, "--nightly", mode, "--state-dir", state_dir]
         for name, value in child_arguments(self.layout, self.config).items():
             argv.extend(("--" + name.replace("_", "-"), value))
+        if observation is not None and self.config.get("schema") == COMBINED_CONFIG_SCHEMA:
+            profile = "CONFIGURED_OFF" if observation.get("paper_configured_off") is True else "LEGACY_EMPTY"
+            argv.extend(("--expected-nightly-paper-profile", profile))
+            if profile == "CONFIGURED_OFF":
+                argv.extend(("--expected-nightly-paper-origin", observation["paper_origin"]))
         result = self.runner(argv, rg.child_environment(confirmations), timeout, self.state_fd)
         self.verify_pins()
         return result
@@ -435,7 +469,8 @@ class Nightly:
             try:
                 observation, required = self.preflight()
                 stage = "APPLY"
-                code, data, err = self.child("--apply", self.layout.state_root + "/" + date, required, APPLY_TIMEOUT)
+                code, data, err = self.child("--apply", self.layout.state_root + "/" + date, required,
+                                             APPLY_TIMEOUT, observation=observation)
                 exit_code = code
                 failure = CHILD_ERROR.search(err[:4096])
                 diagnostic = failure.group(1).decode("ascii") if failure else None

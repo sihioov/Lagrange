@@ -166,6 +166,7 @@ pub struct ApiConfig {
     pub owner_beta_access: OwnerBetaAccessMode,
     /// Separate Paper activation inside the temporary owner-only beta.
     pub owner_beta_paper: OwnerBetaPaperMode,
+    pub owner_beta_paper_off_consent_enabled: bool,
     /// Separate activation for the sealed historical price-only input.
     pub owner_beta_price_input: OwnerBetaPriceInputMode,
     pub owner_beta_daily: job_queue::owner_beta::runner::daily_runtime::DailyProcessMode,
@@ -206,6 +207,14 @@ pub fn system_candidate_eod_ready() -> bool {
     let offset = chrono::FixedOffset::east_opt(9 * 60 * 60).expect("fixed Seoul offset");
     chrono::Utc::now().with_timezone(&offset).time()
         >= chrono::NaiveTime::from_hms_opt(16, 30, 0).expect("valid candidate close threshold")
+}
+
+impl ApiConfig {
+    pub(crate) fn allows_paper_off_consent(&self) -> bool {
+        self.owner_beta_paper_off_consent_enabled
+            && self.owner_beta_access.requires_owner()
+            && !self.owner_beta_paper.is_enabled()
+    }
 }
 
 /// The assembled router state.
@@ -377,6 +386,7 @@ impl ApiState {
                 code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
                 owner_beta_access,
                 owner_beta_paper,
+                owner_beta_paper_off_consent_enabled: false,
                 owner_beta_price_input,
                 owner_beta_daily:
                     job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,

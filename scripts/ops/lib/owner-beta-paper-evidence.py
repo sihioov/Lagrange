@@ -34,6 +34,7 @@ SCHEMA_PATH = Path(__file__).resolve().parents[3] / 'docs/contracts/owner-beta-p
 SCHEMA = json.loads(SCHEMA_PATH.read_bytes())
 CURRENT_SCHEMA = json.loads(SCHEMA_PATH.with_name('owner-beta-paper-current-binding-v1.schema.json').read_bytes())
 CURRENT_LEAF = 'current-binding.json'
+ARCHIVE_LOCK_LEAF = 'archive.lock'
 REFRESH_SECONDS = 15  # leave headroom inside the contract's 30-second maximum
 # Linux UAPI asm-generic/fcntl.h: Python may omit the named OFD constants even
 # though fcntl(2) exposes them. The syscall still fails closed on unsupported FS.
@@ -52,7 +53,7 @@ def require(ok, code='SOURCE_INVALID'):
         raise Rejected(code)
 
 def error_tag(error):
-    codes=set(SCHEMA['$defs']['failure']['properties']['code']['enum'])|{'UNIT_OWNERSHIP_UNPROVEN','UNIT_CLEANUP_UNKNOWN','CLEANUP_UNKNOWN','REPLACED'}
+    codes=set(SCHEMA['$defs']['failure']['properties']['code']['enum'])|{'UNIT_OWNERSHIP_UNPROVEN','UNIT_CLEANUP_UNKNOWN','CLEANUP_UNKNOWN','REPLACED','ARCHIVE_BUSY'}
     return str(error) if isinstance(error,Rejected) and str(error) in codes else type(error).__name__
 
 def digest(raw):
@@ -519,9 +520,97 @@ class Timer:
         if self.fd >= 0:
             fd=self.fd;self.fd=-1;os.close(fd)
 
+class ArchiveLock:
+    """The live witness's shared side of the fixed protected archive gate."""
+    def __init__(self, directory, directory_fd, fd):
+        self.directory = directory
+        self.directory_fd = directory_fd
+        self.fd = fd
+        self.shared = False
+        self.cleanup_deadline = None
+        self.directory_identity = self.identity(directory_fd)
+        self.lock_identity = self.identity(fd)
+
+    @staticmethod
+    def identity(fd):
+        info = os.fstat(fd)
+        return info.st_dev, info.st_ino
+
+    def check(self):
+        require(not os.get_inheritable(self.directory_fd) and not os.get_inheritable(self.fd),
+                'ORIGIN_UNPROVEN')
+        with opened(self.directory, directory=True, exact=(0,0,0o700)) as directory_fd:
+            require(self.identity(directory_fd) == self.directory_identity, 'REPLACED')
+            with opened(self.directory / ARCHIVE_LOCK_LEAF, write=True, exact=(0,0,0o600)) as named:
+                require(self.identity(named) == self.identity(self.fd) == self.lock_identity, 'REPLACED')
+                info = os.stat(ARCHIVE_LOCK_LEAF, dir_fd=self.directory_fd, follow_symlinks=False)
+                require((info.st_dev, info.st_ino) == self.lock_identity and info.st_nlink == 1,
+                        'REPLACED')
+
+    def try_shared(self):
+        self.check()
+        try:
+            fcntl.flock(self.fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        self.shared = True
+        self.check()
+        return True
+
+    def require_shared(self):
+        require(self.shared, 'ARCHIVE_BUSY')
+        self.check()
+
+    def release(self):
+        self.require_shared()
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+        self.shared = False
+
+    def wait_for_cleanup(self):
+        if self.cleanup_deadline is None:
+            self.cleanup_deadline = time.monotonic() + TERM_GRACE + KILL_GRACE + CONTAINER_CLEANUP
+        while not self.try_shared():
+            delay = self.cleanup_deadline - time.monotonic()
+            require(delay > 0, 'ARCHIVE_BUSY')
+            time.sleep(min(delay, 0.25))
+
+
+@contextlib.contextmanager
+def archive_lock(root):
+    directory = Path(root) / '.control'
+    with opened(directory, directory=True, exact=(0,0,0o700)) as directory_fd:
+        with opened(directory / ARCHIVE_LOCK_LEAF, write=True, exact=(0,0,0o600)) as fd:
+            gate = ArchiveLock(directory, directory_fd, fd)
+            gate.check()
+            yield gate
+
+
+def install_archive_lock(root):
+    directory = root / '.control'
+    with opened(directory, directory=True, exact=(0,0,0o700)) as directory_fd:
+        try:
+            fd = os.open(ARCHIVE_LOCK_LEAF, os.O_RDWR | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            # The caller opens and checks this existing gate without replacing it.
+            return
+        try:
+            os.fchown(fd, 0, 0)
+            os.fchmod(fd, 0o600)
+            os.fsync(fd)
+            with opened(directory, directory=True, exact=(0,0,0o700)) as named:
+                require(ArchiveLock.identity(named) == ArchiveLock.identity(directory_fd), 'REPLACED')
+                info = os.stat(ARCHIVE_LOCK_LEAF, dir_fd=directory_fd, follow_symlinks=False)
+                require((info.st_dev, info.st_ino) == ArchiveLock.identity(fd), 'REPLACED')
+            os.fsync(directory_fd)
+        finally:
+            os.close(fd)
+
+
 class Journal:
-    def __init__(self, binding, session):
-        self.binding=binding; self.session=session; self.events=[]
+    def __init__(self, binding, session, archive):
+        archive.require_shared()
+        self.archive=archive; self.binding=binding; self.session=session; self.events=[]
         c=binding['cohort']; self.slot=slot_id(c,session)
         self.directory=Path(binding['evidence_root'])/'events'/self.slot[7:]
         with opened(self.directory.parent,directory=True,exact=(0,10001,0o750)) as parent:
@@ -532,12 +621,14 @@ class Journal:
             'generation':str(uuid.uuid4()),'nonce':str(uuid.uuid4()),'parent':process(os.getpid())},
             reservation_id=str(uuid.uuid4()),invocation_id=str(uuid.uuid4()))
     def append(self, kind, data=None):
+        self.archive.require_shared()
         event=dict(self.common,sequence=len(self.events),previous_sha256=digest(canonical(self.events[-1])) if self.events else None,
                    observed=sample(),kind=kind,data={} if data is None else data)
         validate(event,SCHEMA['$defs']['event']); require(len(canonical(event)) <= SOURCE_LIMIT)
         publish(self.directory,f'{len(self.events):06}.json',canonical(event)); self.events.append(event)
         return digest(canonical(event))
     def claim(self):
+        self.archive.require_shared()
         publish(Path(self.binding['evidence_root'])/'.control',dispatch_key(self.binding['cohort'],self.session)+'.json',canonical(self.common),True)
 
 # The binding is installed OFF and contains only nonsecret identities/paths.
@@ -994,9 +1085,12 @@ class Scheduler:
         self.path=path; self.b,self.pin=structural_binding(path); self.runtime=load_runtime(); self.docker=self.runtime.Docker()
         self.j=None; self.child=None; self.current=None; self.raw=None; self.action=None; self.phase_index=0
         self.current_container=None;self.owned_child=None;self.cleanup_errors=[];self.authority=None;self.in_cleanup=False
+        self.archive=None;self.interrupted=False
         self.command_custodies=[]
         self.previous_clock=sample(); self.initial_clock=self.previous_clock
     def guard(self):
+        require(not self.interrupted,'INTERRUPTED')
+        if self.archive is not None:self.archive.check()
         require(self.authority is not None,'ORIGIN_UNPROVEN');self.authority.poll(check_assets=True)
         now=sample(); clock_step(self.previous_clock,now); clock_step(self.initial_clock,now); self.previous_clock=now
         require(Path('/proc/sys/kernel/random/boot_id').read_text().strip()==self.j.common['arm']['boot_id'],'CLOCK_INVALID')
@@ -1057,7 +1151,15 @@ class Scheduler:
             value['child']=self.owned_child.identity
             value['child_custody']=self.owned_child.diagnostic()
         if getattr(self,'command_custodies',None):value['command_children']=[owned.diagnostic() for owned in self.command_custodies]
-        publish(Path(self.b['evidence_root'])/'.control',(invocation or 'startup')+'-cleanup-'+str(uuid.uuid4())+'.json',canonical(value),True)
+        def write_notice(archive):
+            archive.require_shared()
+            publish(Path(self.b['evidence_root'])/'.control',(invocation or 'startup')+'-cleanup-'+str(uuid.uuid4())+'.json',canonical(value),True)
+        if self.archive is not None:
+            write_notice(self.archive)
+        else:
+            with archive_lock(self.b['evidence_root']) as archive:
+                require(archive.try_shared(),'ARCHIVE_BUSY')
+                write_notice(archive)
     def cleanup_container(self,lease,scope):
         try:
             lease.cleanup(lambda value:self.cleanup_note(scope,'OBSERVED_TERMINAL',lease,value))
@@ -1165,7 +1267,19 @@ class Scheduler:
         pass
     def run_session(self,session):
         self.child=None;self.owned_child=None;self.failure_code=None;self.cleanup_errors=[]
-        self.j=Journal(self.b,session); self.j.append('STARTED')
+        self.j=None
+        try:
+            with archive_lock(self.b['evidence_root']) as archive:
+                self.archive=archive
+                require(archive.try_shared(),'ARCHIVE_BUSY')
+                self.run_locked_session(session,archive)
+        except BaseException as error:
+            self.invalidate(error)
+            raise
+        finally:
+            self.archive=None
+    def run_locked_session(self,session,archive):
+        self.j=Journal(self.b,session,archive); self.j.append('STARTED')
         due=due_ns(session); require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
         # An intent is a durable one-use claim too. A crash before RESERVED may
         # lose a day, but a restarted parent can never inherit the old arm.
@@ -1187,8 +1301,14 @@ class Scheduler:
             timer=Timer(due);self.cancel=Timer(due+2*86400*10**9)
             self.j.append('ARMED'); require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
             self.armed()
+            require(due-time.time_ns()>=60*10**9,'MISSED_UNARMED')
+            # ARMED and its one-use claim are already durable. The only pause
+            # available to the archive leaves the Current and the timer live.
+            archive.release()
             while not select.select([timer.fd],[],[],0.25)[0]: self.guard()
-            timer.consume(); self.guard(); require(due<=time.time_ns()<=due+60*10**9,'MISSED_LATE')
+            timer.consume()
+            require(archive.try_shared(),'ARCHIVE_BUSY')
+            self.guard(); require(due<=time.time_ns()<=due+60*10**9,'MISSED_LATE')
             reserved=self.j.append('RESERVED')
             db=self.helper('reserve'); require(db['slot']['root_event_sha256']==reserved and db['slot']['reservation_id']==self.j.common['reservation_id'],'DB_UNAVAILABLE')
             self.j.append('DB_RESERVED',{'readback_sha256':digest(canonical(db))})
@@ -1246,45 +1366,52 @@ class Scheduler:
             self.guard(); verify_chain(self.j.events,'RUN_LINKED')
             # Final eligibility is published only after owned descriptors close.
             # A close error cannot leave a briefly eligible LINKED prefix.
-            errors=close_handles();self.cleanup_errors.extend(errors)
+            with self.cleanup_scope():errors=close_handles()
+            self.cleanup_errors.extend(errors)
             require(not errors,'UNKNOWN')
+            require(not self.interrupted,'INTERRUPTED')
             self.j.append('LINKED');verify_chain(self.j.events,'LINKED')
         except BaseException as exc:
-            self.invalidate(exc)
-            codes=SCHEMA['$defs']['failure']['properties']['code']['enum']
-            code=self.failure_code if self.failure_code in codes else str(exc) if isinstance(exc,Rejected) and str(exc) in codes else 'UNKNOWN'
-            self.failure_code=code;errors=list(self.cleanup_errors)
-            # Preserve failure and the durable claim BEFORE cleanup. No later
-            # event can turn this failed invocation into a successful chain.
-            try:self.j.append('FAILED',{'code':code})
-            except Exception as error:errors.append('journal:'+type(error).__name__)
-            if self.child is not None:
+            # Revoke immediately even while a backup owns the archive gate.
+            # Reacquisition is for terminal evidence and cleanup only, never dispatch.
+            with self.cleanup_scope():
+                self.invalidate(exc)
+                codes=SCHEMA['$defs']['failure']['properties']['code']['enum']
+                code=self.failure_code if self.failure_code in codes else str(exc) if isinstance(exc,Rejected) and str(exc) in codes else 'UNKNOWN'
+                self.failure_code=code;errors=list(self.cleanup_errors)
                 try:
-                    require(self.owned_child is not None,'UNKNOWN')
-                    self.owned_child.cleanup()
-                except Exception as error:errors.append('child:'+error_tag(error))
-            # Quiesce the wrapper first: it must not launch a named object after
-            # an absence observation. If child cleanup failed, absence is UNKNOWN.
-            try:
-                self.abort_owned()
-            except Exception as error:errors.append('container:'+error_tag(error))
-            try:self.cleanup_note('session','UNKNOWN' if errors else 'CLEAN',errors=errors)
-            except Exception as error:errors.append('receipt:'+type(error).__name__)
-            failure=child_failure(Rejected(code),self.owned_child,errors)
-            failure.original_failure=error_tag(exc)
-            if isinstance(exc,OSError):failure.original_errno=exc.errno
-            raise failure from exc
+                    archive.wait_for_cleanup()
+                    self.j.append('FAILED',{'code':code})
+                except Exception as error:
+                    errors.append('journal:'+error_tag(error))
+                if self.child is not None:
+                    try:
+                        require(self.owned_child is not None,'UNKNOWN')
+                        self.owned_child.cleanup()
+                    except Exception as error:errors.append('child:'+error_tag(error))
+                # Stop the exact wrapper before interpreting container absence.
+                try:self.abort_owned()
+                except Exception as error:errors.append('container:'+error_tag(error))
+                try:self.cleanup_note('session','UNKNOWN' if errors else 'CLEAN',errors=errors)
+                except Exception as error:errors.append('receipt:'+error_tag(error))
+                failure=child_failure(Rejected(code),self.owned_child,errors)
+                failure.original_failure=error_tag(exc)
+                if isinstance(exc,OSError):failure.original_errno=exc.errno
+                raise failure from exc
         finally:
-            # All descriptors close even if another descriptor's close fails.
-            errors=close_handles()
-            if errors:
-                self.invalidate(Rejected('UNKNOWN'))
-                if self.j.events[-1]['kind']!='FAILED':
-                    self.failure_code='UNKNOWN'
-                    try:self.j.append('FAILED',{'code':'UNKNOWN'})
-                    except Exception as error:errors.append('journal:'+type(error).__name__)
-                try:self.cleanup_note('descriptors','UNKNOWN',errors=errors)
-                finally:raise Rejected('UNKNOWN')
+            with self.cleanup_scope():
+                # All descriptors close even if another descriptor's close fails.
+                errors=close_handles()
+                if errors:
+                    self.invalidate(Rejected('UNKNOWN'))
+                    if self.j.events[-1]['kind']!='FAILED':
+                        self.failure_code='UNKNOWN'
+                        try:
+                            archive.wait_for_cleanup()
+                            self.j.append('FAILED',{'code':'UNKNOWN'})
+                        except Exception as error:errors.append('journal:'+error_tag(error))
+                    try:self.cleanup_note('descriptors','UNKNOWN',errors=errors)
+                    finally:raise Rejected('UNKNOWN')
     def run(self):
         root=Path(self.b['evidence_root'])
         with opened(root/'.control/lock',write=True,exact=(0,0,0o600)) as lock:
@@ -1292,9 +1419,13 @@ class Scheduler:
             self.authority=CurrentAuthority(self,lock)
             old_call=self.docker.call;self.docker.call=self.docker_call
             handlers={}
-            def interrupted(sig,frame):raise Rejected('INTERRUPTED')
+            def interrupted(sig,frame):
+                if self.interrupted:return
+                self.interrupted=True
+                if not self.in_cleanup:raise Rejected('INTERRUPTED')
             try:
                 for sig in (signal.SIGTERM,signal.SIGINT):handlers[sig]=signal.signal(sig,interrupted)
+                with archive_lock(root):pass
                 self.authority.start()
                 while True:
                     self.authority.poll(check_assets=True)
@@ -1391,7 +1522,9 @@ def install_witness(args, *, _render_service=None, _systemctl=None):
     if args.mode in ('dry-run','preflight'):
         print(body,end=''); print('PAPER_WITNESS_INSTALL_PLAN: no runtime operation'); return 0
     if args.mode=='check':
-        require(read_file(target,16384,exact=(0,0,0o644))==body.encode()); return 0
+        require(read_file(target,16384,exact=(0,0,0o644))==body.encode())
+        with archive_lock(b['evidence_root']):pass
+        return 0
     require(args.mode in ('apply','install-disabled') and os.geteuid()==0)
     load_lifecycle().prepare_storage(str(Path(b['release_root']).parent.parent))
     def systemctl(*argv):
@@ -1424,21 +1557,24 @@ def install_witness(args, *, _render_service=None, _systemctl=None):
         if not (root/'.control/lock').exists(): publish(root/'.control','lock',b'lock\n',True)
         with opened(root/'.control/lock',write=True,exact=(0,0,0o600)) as scheduler_lock:
             fcntl.flock(scheduler_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            with opened(root,directory=True,exact=(0,10001,0o750)) as parent:
-                if not (root/'current').exists():
-                    os.mkdir('current',0o750,dir_fd=parent);os.chown('current',0,10001,dir_fd=parent,follow_symlinks=False);os.chmod('current',0o750,dir_fd=parent,follow_symlinks=False);os.fsync(parent)
-            current=CurrentPublication(b,scheduler_lock)
-            try:current.emit('INVALID','STOPPED',b)
-            finally:current.close()
-            with opened(args.systemd_dir,directory=True) as parent:
-                fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644,dir_fd=parent)
-                with os.fdopen(fd,'wb') as out:
-                    os.fchmod(out.fileno(),0o644);out.write(body.encode());out.flush();os.fsync(out.fileno())
-                os.fsync(parent)
-            systemctl('daemon-reload')
-            require(systemctl('show',name,'--property=ActiveState','--value')=='inactive')
-            if args.mode=='apply': systemctl('enable',name)
-            else: require(systemctl('show',name,'--property=UnitFileState','--value')=='disabled')
+            install_archive_lock(root)
+            with archive_lock(root) as archive:
+                require(archive.try_shared(),'ARCHIVE_BUSY')
+                with opened(root,directory=True,exact=(0,10001,0o750)) as parent:
+                    if not (root/'current').exists():
+                        os.mkdir('current',0o750,dir_fd=parent);os.chown('current',0,10001,dir_fd=parent,follow_symlinks=False);os.chmod('current',0o750,dir_fd=parent,follow_symlinks=False);os.fsync(parent)
+                current=CurrentPublication(b,scheduler_lock)
+                try:current.emit('INVALID','STOPPED',b)
+                finally:current.close()
+                with opened(args.systemd_dir,directory=True) as parent:
+                    fd=os.open(name,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644,dir_fd=parent)
+                    with os.fdopen(fd,'wb') as out:
+                        os.fchmod(out.fileno(),0o644);out.write(body.encode());out.flush();os.fsync(out.fileno())
+                    os.fsync(parent)
+                systemctl('daemon-reload')
+                require(systemctl('show',name,'--property=ActiveState','--value')=='inactive')
+                if args.mode=='apply': systemctl('enable',name)
+                else: require(systemctl('show',name,'--property=UnitFileState','--value')=='disabled')
     print('PAPER_WITNESS_INSTALLED_INACTIVE');return 0
 
 if __name__=='__main__':

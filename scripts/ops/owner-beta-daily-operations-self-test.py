@@ -386,7 +386,10 @@ class DailyOperationsTests(unittest.TestCase):
         with env.open("a") as stream:
             stream.write("AUTH0_CLIENT_SECRET=synthetic-unprinted-value\n")
         values, overlays = ops.read_context(str(release), COMMIT, "disable")
-        self.assertEqual(values, self.values)
+        self.assertEqual(values, {
+            **self.values,
+            "OWNER_BETA_PAPER_OFF_CONSENT_ENABLED": "",
+        })
         self.assertEqual(overlays, [])
 
     def test_real_context_rejects_shell_interpolation_without_execution(self):

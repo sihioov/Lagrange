@@ -26,6 +26,18 @@ pub(crate) async fn get_state(
     if let Err(response) = require_owner_beta_paper_owner(&state, &session, &rid) {
         return response;
     }
+    if state.cfg.allows_paper_off_consent() {
+        // This view contains only the Owner's current consent setting. It
+        // remains available when rights are withdrawn so consent can be revoked.
+        return match state
+            .rebalance_previews()
+            .owner_beta_paper_off_consent_state(&session.actor())
+            .await
+        {
+            Ok(current) => Json(current.unwrap_or_else(disabled_state)).into_response(),
+            Err(error) => paper_repo_error(error, &rid),
+        };
+    }
     if !state.cfg.owner_beta_paper.is_enabled() {
         return Json(disabled_state()).into_response();
     }
@@ -52,7 +64,8 @@ pub(crate) async fn consent(
     if let Err(response) = require_owner_beta_paper_owner(&state, &session, &rid) {
         return response;
     }
-    if let Some(response) = disabled_response(&state, &rid) {
+    let off_only = state.cfg.allows_paper_off_consent();
+    if let Some(response) = disabled_response(&state, &rid).filter(|_| !off_only) {
         return response;
     }
     if let Err(response) = require_csrf(&headers, &session.0) {
@@ -78,7 +91,13 @@ pub(crate) async fn consent(
     }
     let consent = match state
         .rebalance_previews()
-        .owner_beta_paper_consent(&session.actor(), body.opt_in, body.expected_epoch, &key)
+        .owner_beta_paper_consent(
+            &session.actor(),
+            body.opt_in,
+            body.expected_epoch,
+            &key,
+            off_only,
+        )
         .await
     {
         Ok(consent) => consent,

@@ -67,9 +67,28 @@ export default async function PaperPage(props: PaperPageProps) {
   const locale = await getLocale();
   return OwnerBetaProductRoute({
     product: "paper",
+    renderPaperOffConsent: () => PaperOffConsentPage(paperDictionary[locale]),
     renderProduct: (session) => PaperProductPage(props, session),
     title: paperDictionary[locale].pageTitle,
   });
+}
+
+async function PaperOffConsentPage(t: PaperDictionary) {
+  let initialState: OwnerBetaPaperStateModel | null = null;
+  try {
+    initialState = await (await getProductApi()).getOwnerBetaPaperState();
+  } catch (error) {
+    if (isLoginRequiredError(error)) redirect("/login");
+  }
+  return shell(
+    <OwnerBetaPaperPanel
+      consentOnly
+      initialState={initialState}
+      initialError={initialState === null}
+      runs={[]}
+    />,
+    t,
+  );
 }
 
 async function PaperProductPage({ searchParams }: PaperPageProps = {}, apiSession?: ApiSession) {

@@ -38,6 +38,7 @@ def _load(name, path):
 
 tool = _load("preupgrade_simulation_backup_under_test", HERE / "preupgrade-simulation-backup.py")
 ops = _load("preupgrade_test_daily_operations", HERE / "lib" / "owner-beta-daily-operations.py")
+paper_backup = _load("preupgrade_test_paper_backup", HERE / "lib" / "owner-beta-paper-backup.py")
 runtime = ops.runtime
 
 APP = "a1" * 20
@@ -1184,6 +1185,14 @@ class NightlyTests(Base):
         self.observed_worker = None
         self.bad_targets = False
         self.old_maintenance_plan = False
+        self.configured_paper = False
+        self.paper_capacity = None
+        self.paper_proof = "sha256:" + "d" * 64
+        self.paper_archive = None
+        self.paper_archive_count = 0
+        self.changed_paper_verify = False
+        self.changed_paper_readback = False
+        self.changed_paper_before_api_resume = False
         for digit, (service, identity) in enumerate(self.services.items(), 4):
             image = "sha256:" + format(digit, "x") * 64
             value = beta_container(identity, image)
@@ -1201,6 +1210,49 @@ class NightlyTests(Base):
         value["State"].update(Running=False, Status="exited", ExitCode=0)
         value["HostConfig"]["RestartPolicy"]["Name"] = "no"
 
+    def guard_configured_paper_api_resume(self, argv):
+        expected_control = argv[argv.index("--expected-nightly-daily-control") + 1]
+        expected_origin = argv[argv.index("--expected-nightly-paper-origin") + 1]
+        control = ops.nightly_control(expected_control)
+        self.assertEqual(control, (self.daily_enabled, self.daily_epoch))
+        self.assertEqual(expected_origin, self.paper_proof)
+        context = ops.Context(self.host.release, APP, self.host.images[APP], self.daily_values, [])
+        ownership = ops.Ownership(PROJECT, APP, BETA_IMAGE)
+        operation = ops.Operations(self.docker, self.daily_database, context, context, ownership,
+                                   self.root, "daily", lock_fd=7)
+        config = {"first_auto_session": CONFIG_DATE}
+
+        def read_context(release, commit, mode):
+            self.assertEqual((release, commit), (self.host.release, APP))
+            return self.daily_values, ["-f", "fixture-intraday"] if mode == "enable" else []
+
+        def open_paper_context(source, lock_fd):
+            self.assertEqual(lock_fd, 7)
+            self.assertEqual(source.overlays, [])
+            self.assertEqual(source.values, self.daily_values)
+            self.assertFalse(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+            return contextlib.nullcontext(SimpleNamespace(probe_history=lambda: contextlib.nullcontext(object())))
+
+        observer = mock.Mock()
+        observer.origin_sha256.return_value = ("sha256:" + "1"*64
+                                               if self.changed_paper_before_api_resume else self.paper_proof)
+        paper_ops = SimpleNamespace(open_context=open_paper_context, _ArchiveDeadline=lambda: object(),
+                                   _ConfiguredOffObserver=mock.Mock(return_value=observer))
+        self.events.append(("actual-api-guard", expected_control, expected_origin))
+        with mock.patch.object(ops, "read_context", side_effect=read_context), \
+             mock.patch.object(ops, "activation_binding", return_value=(getattr(self, "daily_binding", None), config)), \
+             mock.patch.object(ops, "daily_reader_floor", return_value=True), \
+             mock.patch.object(ops.install, "check_state"), \
+             mock.patch.object(ops.install, "verify_config", return_value=(config, None)), \
+             mock.patch.object(ops, "load_local", return_value=paper_backup), \
+             mock.patch.object(paper_backup, "_application_context", side_effect=lambda bound: (paper_ops, bound)), \
+             mock.patch.object(paper_backup, "_configured_off_identity", return_value=("account", 0)):
+            try:
+                self.assertEqual(ops.guard_nightly_api(operation, control, paper_origin=expected_origin),
+                                 "NIGHTLY_WRITERS_QUIESCENT")
+            finally:
+                observer.close.assert_called_once()
+
     def run_nightly_child(self, argv, env, timeout):
         if tool.NIGHTLY_API_ONLY in argv:
             daily_api = "--simulation-resume-daily-api" in argv
@@ -1209,7 +1261,12 @@ class NightlyTests(Base):
                 targets = b"api-server web" if self.bad_targets else b"api-server"
                 prefix = b"SIMULATION_DAILY_API_RESUME_TARGETS: " if daily_api else b"SIMULATION_API_RESUME_TARGETS: "
                 return 0, prefix + targets + b"\n", b""
-            if daily_api and self.daily_enabled:
+            if self.configured_paper:
+                try:
+                    self.guard_configured_paper_api_resume(argv)
+                except (runtime.RuntimeErrorCode, paper_backup.PaperBackupError):
+                    return 1, b"", b"compose-release: daily release is not quiescent\n"
+            elif daily_api and self.daily_enabled:
                 self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
                                  f"ENABLED:{self.daily_epoch}")
             else:
@@ -1251,6 +1308,28 @@ class NightlyTests(Base):
             if "nightly-combined-backup" in argv:
                 return 0, b"NIGHTLY_COMBINED_PLAN: fixture\n", b""
             return 0, (tool.PLAN_LINE + "fixture" + tool.NIGHTLY_PLAN_SUFFIX + "\n").encode(), b""
+        if self.configured_paper and "--operation" in argv:
+            operation, mode = argv[argv.index("--operation") + 1], argv[argv.index("--mode") + 1]
+            if operation == "nightly-combined-backup" and mode == "preflight":
+                self.children(argv, env, timeout)
+                if self.paper_capacity is not None:
+                    try:
+                        self.paper_capacity(argv)
+                    except self.paper_capacity_error as exc:
+                        return 1, b"", ("PAPER_BACKUP: FAILED " + str(exc) + "\n").encode()
+                return 0, ("\n".join((tool.PREFLIGHT_LINE, tool.PAPER_PREFLIGHT_LINE,
+                                      tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
+            if operation == "nightly-combined-paper-readback":
+                self.assertEqual(mode, "readback")
+                self.assertIn("--expected-nightly-paper-off", argv)
+                self.assertEqual(argv[argv.index("--expected-nightly-paper-origin") + 1], self.paper_proof)
+                self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
+                                 f"{'ENABLED' if self.daily_enabled else 'DISABLED'}:{self.daily_epoch}")
+                self.assertTrue(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+                self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+                self.events.append(("pinned", operation, mode))
+                return (1, b"", b"") if self.changed_paper_readback else (
+                    0, (tool.PAPER_READBACK_LINE + "\n").encode(), b"")
         if "--operation" in argv and argv[argv.index("--mode") + 1] == "apply":
             operation = argv[argv.index("--operation") + 1]
             if operation.startswith("nightly-combined-"):
@@ -1280,6 +1359,12 @@ class NightlyTests(Base):
                 result = self.children(argv, env, timeout)
                 self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
                 if operation == "nightly-combined-backup":
+                    if self.configured_paper:
+                        self.assertIn("--expected-nightly-paper-off", argv)
+                        self.paper_archive_count += 1
+                        self.paper_archive = "sha256:" + f"{self.paper_archive_count:064x}"
+                        return 0, ("\n".join((tool.PAPER_BACKUP_LINE, tool.PAPER_ARCHIVE_PREFIX + self.paper_archive,
+                                            tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
                     return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED\n", b""
                 return result
             if operation in ("inactive-simulation-verify", "nightly-combined-verify"):
@@ -1291,6 +1376,13 @@ class NightlyTests(Base):
                 if self.fail_verify:
                     return 1, b"", b""
                 if operation == "nightly-combined-verify":
+                    if self.configured_paper:
+                        self.assertIn("--expected-nightly-paper-off", argv)
+                        digest = argv[argv.index("--expected-nightly-paper-archive") + 1]
+                        self.assertEqual(digest, self.paper_archive)
+                        result = "sha256:"+"3"*64 if self.changed_paper_verify else digest
+                        return 0, ("\n".join((tool.PAPER_VERIFY_LINE, tool.PAPER_ARCHIVE_PREFIX + result,
+                                            tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
                     return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED\n", b""
                 return result
         return self.children(argv, env, timeout)
@@ -1330,6 +1422,7 @@ class NightlyTests(Base):
         self.daily_epoch = 4
         database = mock.Mock()
         database.nightly_state.side_effect = lambda *args: (self.daily_enabled, self.daily_epoch)
+        database.status.return_value = "DISABLED"
 
         def control(release, commit, env, action):
             self.events.append(("daily-control", action))
@@ -1462,6 +1555,163 @@ class NightlyTests(Base):
         self.assertTrue(all(not self.docker.service_ids(PROJECT, service) for service in tool.DAILY_SERVICES))
         self.assertEqual(self.steps()[tool.DAILY_RESUME_STEP], "done")
 
+    def test_two_configured_off_nights_require_distinct_archives_and_same_control_proof(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=True)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF")
+        archives = []
+        for night in range(2):
+            if night:
+                state = Path(argv[argv.index("--state-dir") + 1]).with_name("next-configured-night")
+                state.mkdir(mode=0o700)
+                argv[argv.index("--state-dir") + 1] = self.state = str(state)
+                self.events.clear()
+            result = self.run_tool(argv)
+            self.assertEqual(result[0], 0, result)
+            record = self.progress()
+            self.assertTrue(record["nightly"]["paper_configured_off"])
+            self.assertEqual(record["nightly"]["paper_preflight_origin"], self.paper_proof)
+            self.assertTrue(record["nightly_paper_origin_unchanged"])
+            self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
+            archives.append(record["nightly_paper_archive"])
+            verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
+            guard = self.events.index(("actual-api-guard", "ENABLED:4", self.paper_proof))
+            resume = self.events.index(("wrapper", "--simulation-resume-daily-api"))
+            readback = self.events.index(("pinned", "nightly-combined-paper-readback", "readback"))
+            self.assertLess(verify, guard)
+            self.assertLess(guard, resume)
+            self.assertLess(resume, readback)
+            self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+            self.daily_database.control.assert_not_called()
+        self.assertNotEqual(*archives)
+
+    def test_configured_off_api_resume_rejects_changed_source_after_isolated_restore(self):
+        self.configured_paper = self.changed_paper_before_api_resume = True
+        self.combined_fixture(enabled=True)
+        self.assertFailed(self.run_tool(self.combined_argv("--apply", "--nightly")), "PREUPGRADE_RESUME_STEP")
+        self.assertEqual(self.steps()["verify"], "done")
+        self.assertEqual(self.steps()["resume-release"], "failed")
+        self.assertIn(("actual-api-guard", "ENABLED:4", self.paper_proof), self.events)
+        self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
+        self.assertFalse(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+        self.assertFalse(self.progress().get("nightly_completed", False))
+
+    def test_configured_off_api_resume_binds_the_disabled_daily_epoch(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertIn(("actual-api-guard", "DISABLED:4", self.paper_proof), self.events)
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (False, 4))
+        self.daily_database.control.assert_not_called()
+
+    def test_configured_off_nightly_with_unverified_digest_never_resumes_api(self):
+        self.configured_paper = self.changed_paper_verify = True
+        self.combined_fixture(enabled=False)
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 1)
+        self.assertIn("PREUPGRADE_VERIFY_STEP", result[2])
+        self.assertEqual(self.steps()["verify"], "failed")
+        self.assertNotIn(("wrapper", tool.NIGHTLY_API_ONLY), self.events)
+        self.assertFalse(self.daily_enabled)
+
+    def test_configured_off_nightly_rejects_profile_drift_before_signalling(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "LEGACY_EMPTY")
+        result = self.run_tool(argv)
+        self.assertEqual(result[0], 1)
+        self.assertIn(tool.NIGHTLY_ERROR, result[2])
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+
+    def test_configured_off_nightly_rejects_origin_drift_before_signalling(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF",
+                                  "--expected-nightly-paper-origin", "sha256:" + "0"*64)
+        self.assertFailed(self.run_tool(argv), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertEqual(self.mutations(), [])
+
+    def test_configured_off_apply_forwards_claim_date_and_refuses_capacity_before_pause(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=True)
+        date = "2026-11-25"
+        state_root = Path(self.state)
+        source = Path(__file__).with_name("lib") / "owner-beta-paper-backup.py"
+        spec = importlib.util.spec_from_file_location("sequencer_paper_capacity_test", source)
+        paper = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = paper
+        spec.loader.exec_module(paper)
+        usage = SimpleNamespace(f_flag=0, f_bavail=0, f_frsize=4096)
+
+        @contextlib.contextmanager
+        def directory(name):
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+
+        install = SimpleNamespace(root_directory=directory, directory_info=mock.Mock())
+        storage = SimpleNamespace(daily=SimpleNamespace(install=install), values={"MIN_FREE_BYTES": 1},
+            reserve=mock.Mock(), retained_size=mock.Mock(return_value=100), maximum=100)
+
+        def capacity(argv):
+            self.assertEqual(argv[argv.index("--nightly-state-date") + 1], date)
+            paper._preflight_nightly_capacity(storage, self.state)
+
+        self.paper_capacity, self.paper_capacity_error = capacity, paper.PaperBackupError
+        for index, (flags, free, refusal) in enumerate(((0, 0, "SPACE"), (os.ST_RDONLY, 10, "SPACE"),
+                                                       (0, 10, "RETENTION_CAP"))):
+            with self.subTest(refusal=refusal, flags=flags), mock.patch.object(os, "fstatvfs", return_value=usage):
+                scenario = state_root / str(index) / date
+                scenario.mkdir(mode=0o700, parents=True)
+                self.state = str(scenario)
+                argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF")
+                usage.f_flag, usage.f_bavail = flags, free
+                result = self.run_tool(argv)
+                self.assertFailed(result, "PREUPGRADE_TOOL")
+                self.assertIn("PAPER_BACKUP_" + refusal, result[2])
+                self.assertEqual(self.steps(), {})
+                self.assertEqual(self.mutations(), [])
+                self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+                self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+
+    def test_configured_off_recovery_requires_origin_or_proof_backup_never_started(self):
+        self.configured_paper = self.changed_paper_readback = True
+        self.combined_fixture(enabled=False)
+        self.assertFailed(self.run_tool(self.combined_argv("--apply", "--nightly")), tool.NIGHTLY_ERROR)
+        record = self.progress()
+        self.assertEqual(record["steps"]["backup"]["state"], "done")
+        self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
+        path = Path(self.state) / (tool.PROGRESS_NAME + ".json")
+        recover = self.combined_argv("--apply", "--step", "recover")
+        recovered_services = self.mutations()
+
+        self.assertFailed(self.run_tool(recover), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress(), record)
+        self.assertEqual(self.mutations(), recovered_services)
+
+        self.changed_paper_readback = False
+        uncertain = {key: value for key, value in record.items()
+                     if key not in {"nightly_paper_archive", "nightly_paper_origin"}}
+        uncertain["steps"] = {"backup": {"state": "started", "code": None}}
+        path.write_bytes(tool.rg.canonical(uncertain))
+        self.assertFailed(self.run_tool(recover), tool.NIGHTLY_ERROR)
+        self.assertEqual(self.progress(), uncertain)
+
+        before_archive = dict(uncertain, steps={"stop-beta": {"state": "failed", "code": tool.NIGHTLY_ERROR}})
+        path.write_bytes(tool.rg.canonical(before_archive))
+        readback = ("pinned", "nightly-combined-paper-readback", "readback")
+        before_reads = self.events.count(readback)
+        self.assertEqual(self.run_tool(recover)[0:2], (0, "PREUPGRADE_BACKUP: RECOVERED\n"))
+        self.assertEqual(self.events.count(readback), before_reads + 1)
+        self.assertNotIn("nightly_paper_origin", self.progress())
+        self.assertTrue(self.progress()["nightly_recovered"])
+        self.assertEqual(self.mutations(), recovered_services)
+
     def test_combined_nightly_preserves_the_original_daily_api_when_control_was_off(self):
         self.combined_fixture(enabled=True)
         self.daily_enabled = False
@@ -1534,6 +1784,46 @@ class NightlyTests(Base):
             with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
                 ops.guard_nightly_api(operation, (True, 4))
         self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+        self.daily_database.control.assert_not_called()
+
+    def test_actual_legacy_nightly_api_guard_validates_absence_with_daily_read_overlay(self):
+        self.combined_fixture(enabled=True)
+        binding = self.daily_binding
+        images = {**self.host.images[APP], "paper-scheduler": "sha256:" + "9" * 64}
+        context = ops.Context(self.host.release, APP, images, self.daily_values, [])
+        operation = ops.Operations(self.docker, self.daily_database, context, context, binding,
+                                   self.root, "daily", lock_fd=7)
+        config = {"first_auto_session": CONFIG_DATE}
+        paper_ops = paper_backup._local("owner_beta_paper_backup_operations", "owner-beta-paper-operations.py")
+        inventory = mock.Mock()
+        inventory._presence = paper_ops._HISTORY_EMPTY
+        daily_overlay = ["-f", self.host.release + "/deploy/compose/compose.intraday.yml"]
+
+        def read_context(release, commit, mode):
+            self.assertEqual((release, commit), (self.host.release, APP))
+            return self.daily_values, daily_overlay if mode == "enable" else []
+
+        def open_paper_context(source, lock_fd):
+            self.assertEqual(lock_fd, 7)
+            tree = SimpleNamespace(names=Path(self.root).parts[1:])
+            paper_ops._manifest_and_context(source, tree)
+            return contextlib.nullcontext(SimpleNamespace(probe_history=lambda: contextlib.nullcontext(inventory)))
+
+        with mock.patch.object(ops, "read_context", side_effect=read_context), \
+             mock.patch.object(ops, "load_local", return_value=paper_backup), \
+             mock.patch.object(ops, "activation_binding", return_value=(binding, config)), \
+             mock.patch.object(ops.install, "check_state"), \
+             mock.patch.object(paper_ops.daily, "read_context", side_effect=read_context), \
+             mock.patch.object(paper_ops.daily, "read_manifest", return_value=images), \
+             mock.patch.object(paper_ops.daily, "project_binding", return_value=(PROJECT, "daily")), \
+             mock.patch.object(paper_ops, "open_context", side_effect=open_paper_context):
+            runtime.drain(self.docker, binding, runtime.verify_running(self.docker, binding))
+            self.assertEqual(ops.guard_nightly_api(operation, (True, 4)), "NIGHTLY_WRITERS_QUIESCENT")
+            self.assertEqual(context.overlays, daily_overlay)
+            inventory.revalidate.assert_called_once()
+            inventory._presence = object()
+            with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
+                ops.guard_nightly_api(operation, (True, 4))
         self.daily_database.control.assert_not_called()
 
     def test_combined_nightly_prepare_rejects_unhealthy_daily_before_mutation(self):

@@ -287,6 +287,10 @@ owner_beta_paper_mode=$(get OWNER_BETA_PAPER_MODE)
 if ! dotenv_has OWNER_BETA_PAPER_MODE; then
   owner_beta_paper_mode=disabled
 fi
+owner_beta_paper_off_consent_enabled=$(get OWNER_BETA_PAPER_OFF_CONSENT_ENABLED)
+if ! dotenv_has OWNER_BETA_PAPER_OFF_CONSENT_ENABLED; then
+  owner_beta_paper_off_consent_enabled=false
+fi
 owner_beta_equity_signals_mode=$(get OWNER_BETA_EQUITY_SIGNALS_MODE)
 if ! dotenv_has OWNER_BETA_EQUITY_SIGNALS_MODE; then
   owner_beta_equity_signals_mode=disabled
@@ -296,6 +300,7 @@ if ! dotenv_has OWNER_EQUITY_V2_RUNTIME_MODE; then
   owner_equity_v2_runtime_mode=disabled
 fi
 for key in OWNER_BETA_ACCESS_MODE_FILE OWNER_BETA_PAPER_MODE_FILE \
+  OWNER_BETA_PAPER_OFF_CONSENT_ENABLED_FILE \
   OWNER_BETA_PAPER_CONFIG_FILE OWNER_BETA_PAPER_CONFIG_SHA256 \
   LAGRANGE_PAPER_VERIFIED_CONFIG_SHA256 LAGRANGE_PAPER_RELEASE_READY; do
   dotenv_has "$key" && invalid+=("owner_beta_policy_file_forbidden")
@@ -354,6 +359,22 @@ esac
 case "$owner_beta_price_input_mode" in
   disabled|sealed_v1) ;;
   *) invalid+=("owner_beta_price_input_mode_invalid") ;;
+esac
+
+case "$owner_beta_paper_off_consent_enabled" in
+  false) ;;
+  true)
+    [ "$owner_beta_access_mode" = owner_only ] && [ "$owner_beta_paper_mode" = disabled ] ||
+      invalid+=("owner_beta_paper_off_consent_requires_owner_and_disabled_paper")
+    consent_migration="$root/migrations/0071_exclude_owner_beta_paper_from_generic_schedule.up.sql"
+    consent_migration_sha384=dacd033fc2e4006420621aad20fea28c4262de953924a056980c0e584c753d3b1a9b949d163f4c73196507276b0eae4a
+    if [ ! -f "$consent_migration" ] || [ -L "$consent_migration" ] ||
+       ! printf '%s  %s\n' "$consent_migration_sha384" "$consent_migration" |
+         sha384sum --check --status; then
+      invalid+=("owner_beta_paper_off_consent_migration_invalid")
+    fi
+    ;;
+  *) invalid+=("owner_beta_paper_off_consent_invalid") ;;
 esac
 
 case "$owner_beta_paper_mode" in

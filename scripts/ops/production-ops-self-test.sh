@@ -318,9 +318,16 @@ done
 cat >"$release_fixture/repo/scripts/ops/lib/owner-beta-daily-operations.py" <<'PY'
 import os, sys
 args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
-if args.get("--operation") not in ("guard", "guard-processes"):
-    raise SystemExit(2)
 if args.get("--mode") != "apply" or os.fstat(int(args["--lock-fd"])).st_size != 0:
+    raise SystemExit(2)
+if args.get("--operation") == "guard-nightly-api":
+    if args.get("--expected-nightly-daily-control") != "DISABLED:4" or not os.environ.get("FAKE_NIGHTLY_PAPER_ORIGIN"):
+        raise SystemExit(2)
+    if args.get("--expected-nightly-paper-origin") != os.environ["FAKE_NIGHTLY_PAPER_ORIGIN"]:
+        raise SystemExit(1)
+    print("DAILY_OPERATION: NIGHTLY_WRITERS_QUIESCENT")
+    raise SystemExit(0)
+if args.get("--operation") not in ("guard", "guard-processes"):
     raise SystemExit(2)
 print("DAILY_OPERATION: LEGACY_OFF")
 PY
@@ -1265,6 +1272,35 @@ grep -Eq '^compose .* up --no-build --wait --no-deps api-server$' "$compose_log"
   fixture_die 'API-only simulation resume omitted the isolated API startup'
 if grep -Eq '^compose .* run .* (db-role-bootstrap|db-migrate|research-raw-init|research-schema-check)( |$)' "$compose_log"; then
   fixture_die 'API-only simulation resume ran a release initialization service'
+fi
+
+# The installed API-only wrapper must forward both protected configured-OFF
+# values to the inherited-lock check and must never start on a refusal.
+paper_origin=$(printf 'sha256:%064d' 1)
+run_configured_paper_resume() {
+  env PATH="$trust_bin:$compose_bin:$PATH" FAKE_TRUST_ROOT="$tmp" REAL_STAT_BIN="$real_stat" \
+    REAL_INSTALL_BIN="$real_install" COMPOSE_FAKE_LOG="$compose_log" FAKE_SIM_REQUIRED=1 \
+    FAKE_NIGHTLY_PAPER_ORIGIN="$paper_origin" COMPOSE_OVERRIDE_CAPTURE="$override_capture" \
+    PRODUCTION_FAKE_COMMIT="$commit_one" LAGRANGE_RELEASE_ROOT="$release_fixture/install" \
+    bash "$release_fixture/install/current/scripts/ops/compose-release.sh" \
+      --scope release --simulation-release-start --simulation-resume-api-only --apply "$@"
+}
+: >"$compose_log"
+run_configured_paper_resume --expected-nightly-daily-control DISABLED:4 \
+  --expected-nightly-paper-origin "$paper_origin" >"$tmp/configured-paper-api-resume.out"
+grep -Fxq 'COMPOSE_SIMULATION_API_RESUME: PASS' "$tmp/configured-paper-api-resume.out"
+[ "$(grep -Ec '^compose .* up ' "$compose_log")" = 1 ] ||
+  fixture_die 'configured-OFF resume selected more than the API startup'
+grep -Eq '^compose .* up --no-build --wait --no-deps api-server$' "$compose_log"
+
+: >"$compose_log"
+if run_configured_paper_resume --expected-nightly-daily-control DISABLED:4 \
+    --expected-nightly-paper-origin "$(printf 'sha256:%064d' 2)" >"$tmp/configured-paper-api-refused.out" 2>&1; then
+  fixture_die 'configured-OFF resume accepted a different Paper origin'
+fi
+grep -Fq 'daily release is not quiescent' "$tmp/configured-paper-api-refused.out"
+if grep -Eq '^compose .* up ' "$compose_log"; then
+  fixture_die 'failed configured-OFF guard started a service'
 fi
 
 # Post-switch order on a root with a pending simulation release handoff and an

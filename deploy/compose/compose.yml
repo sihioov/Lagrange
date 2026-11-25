@@ -206,6 +206,7 @@ services:
       OWNER_BETA_ACCESS_MODE: ${OWNER_BETA_ACCESS_MODE:-disabled}
       OWNER_BETA_PRICE_INPUT_MODE: ${OWNER_BETA_PRICE_INPUT_MODE:-disabled}
       OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}
+      OWNER_BETA_PAPER_OFF_CONSENT_ENABLED: ${OWNER_BETA_PAPER_OFF_CONSENT_ENABLED:-false}
       # Daily activation is selected only by the verified official wrapper.
       OWNER_BETA_DAILY_MODE: disabled
       MAX_JOBS_PER_OWNER: ${MAX_JOBS_PER_OWNER:-10}

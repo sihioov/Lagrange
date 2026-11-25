@@ -34,6 +34,7 @@ simulation_release_start=0
 simulation_resume_api_only=0
 simulation_resume_daily_api=0
 simulation_resume_daily_control=
+simulation_resume_paper_origin=
 simulation_daily_config_sha256=
 simulation_resume_service=api-server
 simulation_resume_args=()
@@ -214,8 +215,12 @@ while [ "$#" -gt 0 ]; do
       simulation_resume_daily_api=1; shift ;;
     --expected-nightly-daily-control)
       [ "$#" -ge 2 ] && [ -z "$simulation_resume_daily_control" ] &&
-        [[ "$2" =~ ^ENABLED:[1-9][0-9]{0,18}$ ]] || die 'nightly resume requires the original Daily epoch'
+        [[ "$2" =~ ^(ENABLED|DISABLED):[1-9][0-9]{0,18}$ ]] || die 'nightly resume requires the original Daily epoch'
       simulation_resume_daily_control=$2; shift 2 ;;
+    --expected-nightly-paper-origin)
+      [ "$#" -ge 2 ] && [ -z "$simulation_resume_paper_origin" ] &&
+        [[ "$2" =~ ^sha256:[0-9a-f]{64}$ ]] || die 'nightly resume requires the original Paper source digest'
+      simulation_resume_paper_origin=$2; shift 2 ;;
     --backup-config)
       [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$daily_backup_config" ] || die 'backup config needs one path'
       daily_backup_config=$2; shift 2 ;;
@@ -311,8 +316,14 @@ if [ "$simulation_resume_daily_api" -eq 1 ]; then
   simulation_resume_args+=(--same-release-daily-api)
 fi
 if [ -n "$simulation_resume_daily_control" ]; then
-  [ "$simulation_resume_daily_api" -eq 1 ] && [ "$mode" = apply ] ||
-    die 'the original Daily epoch is only accepted by the Daily API-only apply'
+  [ "$simulation_resume_api_only" -eq 1 ] && [ "$mode" = apply ] ||
+    die 'the original Daily epoch is only accepted by the API-only apply'
+  case "$simulation_resume_daily_control" in
+    ENABLED:*) [ "$simulation_resume_daily_api" -eq 1 ] || die 'active Daily requires the verified Daily API' ;;
+    DISABLED:*) [ -n "$simulation_resume_paper_origin" ] || die 'disabled Daily requires the configured-OFF Paper source' ;;
+  esac
+elif [ -n "$simulation_resume_paper_origin" ]; then
+  die 'the original Paper source requires the original Daily epoch'
 fi
 if [ "$simulation_resume_api_only" -eq 1 ]; then
   [ "$simulation_release_start" -eq 1 ] && [ -z "$daily_from_commit" ] &&
@@ -542,6 +553,9 @@ daily_release_guard() {
   [ -z "$daily_from_commit" ] || arguments+=(--from-commit "$daily_from_commit")
   if [ "$operation" = guard-nightly-api ]; then
     arguments+=(--expected-nightly-daily-control "$simulation_resume_daily_control")
+    if [ -n "$simulation_resume_paper_origin" ]; then
+      arguments+=(--expected-nightly-paper-origin "$simulation_resume_paper_origin")
+    fi
   fi
   PYTHONDONTWRITEBYTECODE=1 /usr/bin/python3 "$script_dir/lib/owner-beta-daily-operations.py" \
     "${arguments[@]}" || die 'daily release is not quiescent'

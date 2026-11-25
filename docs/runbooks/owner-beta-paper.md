@@ -38,6 +38,117 @@ install fail closed. Procedure and rollback limits:
 a pre-Paper root"; contract: `docs/contracts/owner-beta-paper-operations-v1.md`
 section 6.1.
 
+## Owner consent preparation
+
+The immutable API release defaults to `OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=false`.
+An explicitly prepared installation sets this flag to `true` with
+`OWNER_BETA_ACCESS_MODE=owner_only` and `OWNER_BETA_PAPER_MODE=disabled`.
+First verify the installed OFF reader, nightly and Paper history compatibility,
+and the original `CONFIGURED` result and independent readback. The release
+validator pins the 0071 consent migration bytes before it accepts the opt-in. The
+normal release applies the migrations before starting the API, which checks
+the resulting protected scheduling function before serving consent.
+
+The Owner signs in normally and uses the consent section at `/paper`.
+The authenticated OFF view supplies the account and control epoch used by the
+existing CSRF-protected consent action. A grant checks current `paper_view`
+and `recommendation` rights. The account Owner can revoke recorded consent
+after rights withdrawal. The API requires the original configured OFF account
+and refuses a prior activation, an in-progress lifecycle transition, or a
+process binding. A completed combined backup that only fenced this OFF account
+retains eligibility when its original drain and verified OFF events match.
+Revocation advances the database epoch immediately. The next ordinary backup
+or reconcile operation checks the exact Owner revocation events from the
+protected journal's floor and advances that floor under the release lock.
+A preflight can recognize this pending advance without changing the journal.
+Complete the reconciliation before changing this installation's consent mode.
+
+A restore verifies the audit SQL originally retained in the archive against
+its capability and descriptor. The 0071 verifier selects the audit SQL by the
+archived schema. It recognizes separate pins for 0069, R2 dividend migration
+0070, and R5 consent migration 0071.
+The consent path keeps the generic Paper surface, previews, apply and the
+Paper runner behind their existing gates. The generic recommendation scheduler
+excludes the Owner-beta Paper account's opt-in at both discovery and enqueue. The 0071
+downgrade requires a revoked or inactive beta binding and preserves prior
+consent events and recommendations.
+
+Verify the resulting consent event independently before preparing the later
+distinct immutable Paper process binding. Count actual same-cohort sessions
+only after the remaining pre-soak conditions have been met.
+
+## Daily backup before Paper activation
+
+On 2026-11-25 the Owner approved daily full backups throughout pre-activation
+observation. Use the [canonical nightly service install and preflight](production-release-and-backup.md#install-the-nightly-simulation-backup-for-an-inactive-daily-installation)
+with the release's `daily-simulation` backup profile. Preflight checks the fixed
+Daily date and mode on the installed release. A configured account must be
+`OFF`, agree with the retained journal floor, and have no active Paper process
+binding. Preflight emits `NIGHTLY_PAPER CONFIGURED_OFF` with its source digest. A verified
+empty Paper history uses the existing Daily/simulation route. The explicit
+combined backup remains available when an operator needs a fresh OFF boundary.
+
+The configured OFF route keeps the original live Paper and Daily control rows
+and their epochs. The nightly sequencer fences the exact API and simulation
+generations and the original Daily cohort. If the current release has a running
+source witness, its next slot must already be `ARMED`, with enough time remaining
+for the complete backup lease and the original 60-second dispatch margin. The
+backup holds the witness's root-owned `.control/archive.lock` over read-only
+file selection. It opens the same protected inode read-only inside the nightly
+service sandbox and takes an exclusive lock against the witness's shared lock.
+The original daemon, one-use claim, timer and live Current
+heartbeat stay in place. A captured Current and claim are historical archive
+members. The restored guest starts with its own local custody.
+
+Before pausing the status observer or stopping the cohort, preflight checks that
+the nightly state and encrypted destination filesystems are writable and have
+the configured minimum free space. It also counts retained set bytes against
+the configured cap. The apply preflight checks the protected date claim and
+its exact release and configuration binding. The root-only workspace under
+`/var/lib/lagrange/backup-state/nightly-simulation/<KST-date>` holds the selected
+projection, database dump, file bundle and restore scratch on disk. Size
+that filesystem for the plaintext capture and isolated verification, and size
+the backup destination for the encrypted set. The runtime still checks free
+space during capture and publication, exact retained and new bytes before
+publishing, and the descriptor limits during native file verification.
+Successful cleanup removes the owned scratch. If a failure leaves scratch,
+retain it with the failed date journal for attended recovery.
+
+The archive contains the unchanged PostgreSQL dump and audit from one exported
+read-only snapshot, its selected file originals, and the exact Paper/Daily
+control commitments. The enclosing six-member encrypted set is unchanged.
+Inside it, `owner-beta-paper-archive-v2` uses
+`paper-combined-configured-off` and a typed `source_proof`. The journaled
+verification requires the archive digest from this nightly attempt. The
+networkless restore guest verifies the original database and files first,
+performs the guest-only `RESTORED_OFF` transition, and proves that its Daily
+control is OFF. If Daily was ON in the original, the guest records that isolated
+control change separately. The serving SQLx migration ledger remains at 0071
+for the Paper consent release.
+
+The nightly sequence resumes the previously running cohort after archive
+verification. Before starting the API, the installed wrapper rechecks the
+verified Paper origin and exact Daily mode and epoch under its release lock.
+A final readback must reproduce the original control, consent and witness
+identity for the date to pass. A refusal preserves the step record for
+manual recovery. Acknowledge a failed night only after fresh readback matches
+the journaled Paper identity. Before backup starts, the protected preflight
+identity supplies that proof. Once backup starts, recovery requires its exact
+archive and captured identity. Acknowledgment preserves the failed outcome.
+Follow the [attended recovery procedure](production-release-and-backup.md#nightly-backup-on-a-simulation-enabled-release-2026-11-20)
+when the original identity is still provable. If consent changed, the witness
+advanced to another reservation, or the original identity is uncertain,
+retain the failed claim and journal. Report which identity changed using the
+protected readback, or report that the difference could not be determined.
+The Owner must decide how to resolve the failed attempt. Preserve legitimate
+consent changes, source reservations and archived receipts during that review.
+Confirm two consecutive successful nights on the same
+configured OFF account with a stable epoch and consent. Include one genuine
+source witness that remains armed through backup and dispatches its original
+claim normally. Check the encrypted set's isolated restore and the services
+that returned. Deployment, those completed nights and the actual trading
+session observation remain R5-04 evidence.
+
 ## Operator and embedded callers
 
 Run the immutable release's `scripts/ops/lib/owner-beta-paper-lifecycle.py` with

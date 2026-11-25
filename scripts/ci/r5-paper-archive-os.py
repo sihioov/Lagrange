@@ -13,7 +13,7 @@ import types
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/ci/r5-paper-archive-os.py"
 HELPER = ROOT / "scripts/ci/r5-paper-native-os.py"
-HELPER_SHA256 = "b35e7cdbf01663b92a8c53c4bfe03c06ebedec693ebdf0e9711e74f86747e7cb"
+HELPER_SHA256 = "d9afe486c8f5dc66c25b170461381f34ff78d646730968d1d03f73a70196bce9"
 ARCHIVE_SOURCE = ROOT / "crates/market-data/src/paper_archive_sources/closure/tests.rs"
 ARCHIVE_SOURCE_SHA256 = "df6e8d4c002a011e8da9d0f7e4b88a07334854d37f2d1386b7768a406a34074d"
 TESTS = (

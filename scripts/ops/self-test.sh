@@ -1116,11 +1116,21 @@ assert_owner_beta_invalid equity-file-channel owner_beta_equity_signals_file_for
 assert_owner_beta_invalid equity-without-owner-only owner_beta_equity_signals_requires_owner_only set_owner_beta_equity_without_owner_only
 assert_owner_beta_invalid paper-enabled owner_beta_paper_evidence_unavailable set_owner_beta_paper_enabled
 
+set_owner_beta_paper_off_consent() {
+  sed -i 's/^OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=.*/OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=true/' "$1"
+}
+set_owner_beta_paper_off_consent_unknown() {
+  sed -i 's/^OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=.*/OWNER_BETA_PAPER_OFF_CONSENT_ENABLED=TRUE/' "$1"
+}
+assert_owner_beta_invalid paper-off-consent-without-owner owner_beta_paper_off_consent_requires_owner_and_disabled_paper set_owner_beta_paper_off_consent
+assert_owner_beta_invalid paper-off-consent-unknown owner_beta_paper_off_consent_invalid set_owner_beta_paper_off_consent_unknown
+
 owner_beta_price_valid=$out_dir/owner-beta-price-valid.env
 cp "$out_dir/.env" "$owner_beta_price_valid"
 sed -i 's/^OWNER_BETA_ACCESS_MODE=.*/OWNER_BETA_ACCESS_MODE=owner_only/' "$owner_beta_price_valid"
 printf '%s\n' 'OWNER_BETA_PRICE_INPUT_MODE=sealed_v1' >>"$owner_beta_price_valid"
 printf '%s\n' 'OWNER_BETA_EQUITY_SIGNALS_MODE=sealed_v1' >>"$owner_beta_price_valid"
+set_owner_beta_paper_off_consent "$owner_beta_price_valid"
 chmod 0600 "$owner_beta_price_valid"
 if LAGRANGE_ENV_FILE="$owner_beta_price_valid" \
    LAGRANGE_CODE_COMMIT=0000000000000000000000000000000000000000 \

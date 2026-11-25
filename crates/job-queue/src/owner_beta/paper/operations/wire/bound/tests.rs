@@ -692,3 +692,55 @@ fn retained_recovery_exact_readback_accepts_later_off_but_rejects_malformed_gran
     readback["result_sha256"] = json!(hash(&changed_bytes));
     assert!(ExactReadback::parse(readback, &dispatch.request).is_err());
 }
+
+#[test]
+fn configured_off_bound_receipt_keeps_source_epoch_zero_and_archive_identity() {
+    let fixture = fixture();
+    let one_restore = fixture["traces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|trace| trace["actions"].as_array().unwrap())
+        .find_map(|action| {
+            let dispatch = original(&fixture, name(action, "dispatch").ok()?).ok()?;
+            let d = BoundDispatch::parse(dispatch.as_bytes()).ok()?;
+            (d.action.verb == Verb::RestoreOff).then_some(d)
+        })
+        .unwrap();
+    let mut root_wire = one_restore.root.intent.value;
+    root_wire["expected_epoch"] = json!(0);
+    root_wire["predecessor_generation"] = Value::Null;
+    let root = parse_root_intent(&bytes(&root_wire)).unwrap();
+    let mut artifact = one_restore.artifact.unwrap().value;
+    artifact["schema"] = json!(CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA);
+    artifact["source_epoch"] = json!(0);
+    artifact["expected_epoch"] = json!(0);
+    artifact["intent_sha256"] = json!(root.sha256);
+    artifact["source_proof_sha256"] = json!(hash(b"fixture-source-proof"));
+    let mut action_wire = parse_canonical(one_restore.action.canonical.as_bytes()).unwrap();
+    action_wire["root_intent_sha256"] = json!(root.sha256);
+    assert_ne!(
+        artifact["source_generation"],
+        root.intent.value["predecessor_generation"]
+    );
+
+    let parse = |artifact: &Value| {
+        let mut wire = action_wire.clone();
+        wire["artifact_sha256"] = json!(hash(&bytes(artifact)));
+        let action = parse_action(&bytes(&wire), &root)?;
+        parse_bound_artifact(&bytes(artifact), &root, &action)
+    };
+    assert!(parse(&artifact).is_ok());
+    assert!(validate_transition("RESTORED_OFF", &artifact).is_err());
+    artifact["source_epoch"] = json!(1);
+    assert!(parse(&artifact).is_err());
+    artifact["source_epoch"] = json!(0);
+    artifact["scope"] = json!("PAPER_STOP");
+    assert!(parse(&artifact).is_err());
+    artifact["scope"] = json!("COMBINED_BACKUP");
+    artifact
+        .as_object_mut()
+        .unwrap()
+        .remove("source_proof_sha256");
+    assert!(parse(&artifact).is_err());
+}

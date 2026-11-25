@@ -1554,7 +1554,7 @@ class FixtureDecisionTests(unittest.TestCase):
                 source_codes.add(node.exc.args[0].value)
         source_codes.discard("FIXTURE_SQL_")
         self.assertEqual(fixture._CLOSED_FIXTURE_CODES, frozenset(source_codes))
-        self.assertEqual(len(source_codes), 150)
+        self.assertEqual(len(source_codes), 151)
         self.assertNotIn("FIXTURE_SQL_", fixture._CLOSED_FIXTURE_CODES)
         self.assertNotIn("FIXTURE_SQL_57014", fixture._CLOSED_FIXTURE_CODES)
 
@@ -1742,7 +1742,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                  and isinstance(node.func.value, ast.Name) and node.func.value.id == "runner"]
         names = [name for _line, name in sorted(calls)]
         self.assertEqual(names, ["positive", "positive", "restore_negative", "fault", "pre_paper_install",
-                                 "backup_restart"])
+                                 "backup_restart", "off_consent_backup"])
 
     def test_only_the_exact_lifecycle_subset_is_not_run(self):
         self.assertFalse(fixture.lifecycle_subset_manifest(self.manifest(self.real_images())))
@@ -2327,7 +2327,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "migrations").mkdir()
-            for version in range(1, 71):
+            for version in range(1, 72):
                 (root / "migrations" / ("%04d_m.up.sql" % version)).write_bytes(b"select %d;\n" % version)
 
             def owner():
@@ -2359,21 +2359,22 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
                     if found:
                         self.inserted.append(int(found[1]))
                     return b""
-            for stop, versions in ((66, list(range(1, 66))), (71, list(range(1, 71)))):
+            for stop, versions in ((66, list(range(1, 66))), (72, list(range(1, 72)))):
                 value = owner()
                 with self.subTest(stop=stop), mock.patch.object(fixture.os, "chown"), \
                         mock.patch.object(fixture, "PgObserver", Database):
                     value._setup_database(root, "unlogged-fixture-password", migration_stop=stop)
                     self.assertEqual(value.observer.inserted, versions)
                     # Statistics only after the full schema; the pre-Paper case never creates them.
-                    self.assertEqual(value.observer.extensions, int(stop == 71))
-                    if stop == 71:
+                    self.assertEqual(value.observer.extensions, int(stop == 72))
+                    if stop == 72:
                         self.assertEqual(value.observer.assertion, versions)
                     if stop == 66:
-                        value._apply_migrations(root, range(66, 70))
-                        self.assertEqual(value.observer.inserted, list(range(1, 70)))
-                        value._apply_migrations(root, range(70, 71))
-                        self.assertEqual(value.observer.inserted, list(range(1, 71)))
+                        start = 66
+                        for tip in (69, 70, 71):
+                            value._apply_migrations(root, range(start, tip + 1))
+                            self.assertEqual(value.observer.inserted, list(range(1, tip + 1)))
+                            start = tip + 1
                         self.assertEqual(value.observer.extensions, 0)
             for stop in (65, 67, 69):
                 value = owner()
@@ -2385,7 +2386,7 @@ class PrePaperInstallDecisionTests(unittest.TestCase):
         parameters = inspect.signature(fixture.FixtureOwner.setup).parameters
         self.assertEqual([name for name, item in parameters.items() if item.kind is item.KEYWORD_ONLY],
                          ["_prepare_release", "migration_stop"])
-        self.assertEqual(parameters["migration_stop"].default, 71)
+        self.assertEqual(parameters["migration_stop"].default, 72)
         owner = object.__new__(fixture.FixtureOwner)
         for kwargs in ({"migration_stop": 67}, {"migration_stop": 66, "_prepare_release": lambda *_: None}):
             with self.subTest(kwargs=kwargs), self.assertRaises(fixture.FixtureError):

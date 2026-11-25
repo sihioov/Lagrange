@@ -1888,6 +1888,37 @@ while True: time.sleep(0.05)
                 self.assertEqual(projected["retry_attempts"], 0)
                 self.assertNotIn("PRIVATE_SENTINEL", json.dumps(projected))
 
+    def test_hosted_lane_evidence_keeps_only_known_owner_phases_and_timings(self) -> None:
+        for file, phase, nested in (
+            ("tests/e2e/owner-beta-recommendations.spec.ts",
+             "R2_DAILY_SWITCH_VERIFY", "R2_DAILY_SWITCH_VERIFY_STATUS"),
+            ("tests/e2e/owner-beta-simulations.spec.ts",
+             "R4_SIM_CANCEL_EXPIRED_REQUESTS", "R4_SIM_CANCEL_EXPIRED_CSRF"),
+        ):
+            with self.subTest(file=file):
+                steps = [{
+                    "title": phase, "duration": 1234,
+                    "error": {"message": "PRIVATE_PHASE_DETAILS"},
+                    "steps": [
+                        {"title": nested, "duration": 350, "error": {"stack": "PRIVATE_STACK"}},
+                        {"title": nested, "duration": 910},
+                        {"title": "PRIVATE_DYNAMIC_TITLE", "duration": 99},
+                    ],
+                }]
+                case = runner.Case(
+                    runner.CaseKey("chromium", file, 484, "fixture", "id"),
+                    (), "unexpected", "passed",
+                    ({"status": "timedOut", "retry": 0, "steps": steps},), (),
+                )
+                result = runner.hosted_lane_evidence(runner.LaneOutcome(
+                    "off", "command_failed", 1, 1, 0, 0, 0, "COMMAND_FAILED", True, cases=[case],
+                ))
+                self.assertEqual(result["cases"][0]["attempts"], [{
+                    "status": "timedOut", "retry": 0, "failed_steps": [phase, nested],
+                    "step_timings_ms": {phase: 1234, nested: 350},
+                }])
+                self.assertNotIn("PRIVATE_", json.dumps(result))
+
     def test_hosted_lane_evidence_localizes_nested_owner_assertions_with_bounds(self) -> None:
         owner_file = "tests/e2e/owner-beta-recommendations.spec.ts"
         sensitive = {

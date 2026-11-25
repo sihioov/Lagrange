@@ -106,6 +106,20 @@ HOSTED_OWNER_BETA_ASSERTION_STEPS = frozenset({
     "R2_DAILY_SWITCH_VERIFY_TOGGLE",
     "R2_DAILY_SWITCH_VERIFY_HISTORY_ABSENT",
 })
+HOSTED_OWNER_BETA_STEP_TITLES = {
+    "tests/e2e/owner-beta-recommendations.spec.ts": (
+        HOSTED_LANE_PHASE_STEPS, HOSTED_OWNER_BETA_ASSERTION_STEPS,
+    ),
+    "tests/e2e/owner-beta-simulations.spec.ts": (
+        frozenset({
+            "R4_SIM_CANCEL_EXPIRED_SETUP",
+            "R4_SIM_CANCEL_EXPIRED_TRIGGER",
+            "R4_SIM_CANCEL_EXPIRED_REQUESTS",
+            "R4_SIM_CANCEL_EXPIRED_RECOVERY",
+        }),
+        frozenset({"R4_SIM_CANCEL_EXPIRED_CSRF", "R4_SIM_CANCEL_EXPIRED_POST"}),
+    ),
+}
 INTRADAY_TITLE_MAP = {
     "updates a READY membership quote without an analysis snapshot or page reload":
         "updates a READY membership quote without an analysis snapshot or page reload",
@@ -1505,9 +1519,11 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
     def safe_enum(value: Any, allowed: set[str], fallback: str = "UNKNOWN") -> str:
         return value if isinstance(value, str) and value in allowed else fallback
 
-    def failed_step_titles(steps: list[Any]) -> list[str]:
+    def step_evidence(
+        steps: list[Any], phase_titles: frozenset[str], assertion_titles: frozenset[str],
+    ) -> tuple[list[str], dict[str, int]]:
         failed: list[str] = []
-        seen: set[str] = set()
+        timings: dict[str, int] = {}
         stack: list[tuple[Any, int]] = [(iter(steps[:32]), 0)]
         examined = 0
         while stack and examined < HOSTED_LANE_STEP_MAX_NODES:
@@ -1521,19 +1537,17 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
             if not isinstance(step, dict):
                 continue
             title = step.get("title")
-            allowed_titles = HOSTED_LANE_PHASE_STEPS if depth == 0 else HOSTED_OWNER_BETA_ASSERTION_STEPS
-            if (
-                isinstance(title, str)
-                and title in allowed_titles
-                and isinstance(step.get("error"), dict)
-                and title not in seen
-            ):
-                failed.append(title)
-                seen.add(title)
+            allowed_titles = phase_titles if depth == 0 else assertion_titles
+            if isinstance(title, str) and title in allowed_titles:
+                if isinstance(step.get("error"), dict) and title not in failed:
+                    failed.append(title)
+                duration = count(step.get("duration"))
+                if duration is not None:
+                    timings.setdefault(title, duration)
             children = step.get("steps")
             if depth < HOSTED_LANE_STEP_MAX_DEPTH and isinstance(children, list):
                 stack.append((iter(children), depth + 1))
-        return failed
+        return failed, timings
 
     error = outcome.error if isinstance(outcome.error, str) and outcome.error in known_errors else (
         None if outcome.error is None else "OTHER_FAILURE"
@@ -1587,12 +1601,14 @@ def hosted_lane_evidence(outcome: LaneOutcome) -> dict[str, Any]:
                 result["error_location"] = {"file": case_file, "line": line, "column": column}
         if (
             result["status"] in {"failed", "timedOut", "interrupted"}
-            and case_file == "tests/e2e/owner-beta-recommendations.spec.ts"
+            and case_file in HOSTED_OWNER_BETA_STEP_TITLES
             and isinstance(row.get("steps"), list)
         ):
-            failed_steps = failed_step_titles(row["steps"])
+            failed_steps, timings = step_evidence(row["steps"], *HOSTED_OWNER_BETA_STEP_TITLES[case_file])
             if failed_steps:
                 result["failed_steps"] = failed_steps
+            if timings:
+                result["step_timings_ms"] = timings
         return result
 
     cases = []

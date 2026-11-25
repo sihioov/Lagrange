@@ -25,7 +25,10 @@ describe("getServerSession request memoization", () => {
     const fetcher: typeof fetch = vi.fn(async () => Response.json(SESSION));
     vi.stubGlobal("fetch", fetcher);
 
-    await expect(getServerSession()).resolves.toEqual(SESSION);
+    await expect(getServerSession()).resolves.toEqual({
+      ...SESSION,
+      owner_beta_paper_off_consent_enabled: false,
+    });
 
     expect(mocks.cookies).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledOnce();
