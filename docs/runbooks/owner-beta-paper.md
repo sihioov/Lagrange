@@ -111,8 +111,10 @@ control change separately. The serving SQLx migration ledger remains at 0071
 for the Paper consent release.
 
 The nightly sequence resumes the previously running cohort after archive
-verification. A final readback must reproduce the original control, consent and
-witness identity for the date to pass. A refusal preserves the step record for
+verification. Before starting the API, the installed wrapper rechecks the
+verified Paper origin and exact Daily mode and epoch under its release lock.
+A final readback must reproduce the original control, consent and witness
+identity for the date to pass. A refusal preserves the step record for
 manual recovery. Acknowledge a failed night only after fresh readback matches
 the journaled Paper identity. Before backup starts, the protected preflight
 identity supplies that proof. Once backup starts, recovery requires its exact

@@ -1620,7 +1620,7 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
         fence = _NightlyPaperFence(_NIGHTLY_PAPER_FENCE, context, release_fd, binding, config,
                                   nightly, before[0], unchanged)
         return _paper_backup_module().run_configured_off_nightly(
-            paper_prefix_context(context), release_fd, fence, int(backup["MAX_TOTAL_BYTES"]), backup,
+            ops.paper_prefix_context(context), release_fd, fence, int(backup["MAX_TOTAL_BYTES"]), backup,
             verify=verify, expected_archive=expected_paper_archive)
 
     if verify:
@@ -2236,12 +2236,12 @@ def main(argv=None):
         if paper_readback:
             with paper_capture_release_lock(args.install_root) as release_fd:
                 _paper_backup_module().observe_nightly_paper(
-                    paper_prefix_context(context), release_fd, nightly, args.expected_nightly_paper_origin)
+                    ops.paper_prefix_context(context), release_fd, nightly, args.expected_nightly_paper_origin)
             print("DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN_UNCHANGED")
             return 0
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_context = paper_prefix_context(context)
+                paper_context = ops.paper_prefix_context(context)
                 paper_profile = None
                 paper_origin = None
                 paper_result = None
@@ -2311,7 +2311,7 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_context = paper_prefix_context(context)
+            paper_context = ops.paper_prefix_context(context)
             paper_profile = None
             paper_result = None
             if nightly_combined:
@@ -2394,19 +2394,6 @@ def main(argv=None):
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
-
-
-def paper_prefix_context(context):
-    """Paper prefix context: the "disable" read that the --check inventory uses.
-
-    Paper re-reads read_context(..., "disable") and requires identical values and
-    overlays. "enable" additionally emits the KIS read overlay (compose.intraday.yml
-    under KIS_READ_COORDINATION_MODE=shared_required), which no Paper path consumes;
-    Daily keeps its own "enable" context unchanged.
-    """
-    values, overlays = ops.read_context(context.release, context.commit, "disable")
-    require(values == context.values, "DAILY_BACKUP_CONTEXT")
-    return ops.Context(context.release, context.commit, context.images, values, overlays)
 
 
 def daily_backup_run(context, docker, database, backup, args, research_mode, *, project, verifier_root,

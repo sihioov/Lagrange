@@ -390,7 +390,7 @@ simulation_execution --> simulation_storage : worker claim fences; job/run/pair 
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_migrations.rs:392-405; migrations/0065_owner_beta_simulation_ledger_read.up.sql:3
 simulation_execution --> simulation_ledger : exact baseline checksum read as worker
 
-' evidence: scripts/ops/compose-release.sh:912-917,1069-1072,1090-1093
+' evidence: scripts/ops/compose-release.sh:926-931,1083-1086,1104-1107
 daily_wrapper --> simulation_operations : explicit drain / start / release handoff / reconcile
 ' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:35
 simulation_operations --> simulation_release : checked config, receipt and reader floor
@@ -428,15 +428,15 @@ job_queue --> kis_client : market-only WS realtime runtime;\nowned socket, separ
 ' evidence: crates/factor-engine/src/price_only.rs:9-11 (use market_data::{ApprovedHistoricalPriceOnlyArtifact,..})
 factor_engine --> market_data
 
-' evidence: scripts/ops/compose-release.sh:344-364
+' evidence: scripts/ops/compose-release.sh:355-375
 daily_wrapper --> daily_ops : protected prepare / enable / disable
-' evidence: scripts/ops/compose-release.sh:353-358
+' evidence: scripts/ops/compose-release.sh:364-369
 daily_wrapper --> daily_backup : backup / verify / reconcile
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1687-1705,1710-1739
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45,1679-1684,1715-1722,659-664
 daily_backup --> daily_files : source and restored byte/reference audit
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:294-311,413-460; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:302-319,421-468; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:452-470; deploy/db/daily-backup-verify.sh:42-44
 daily_backup --> daily_sql : same audit inside isolated restored database
@@ -445,11 +445,11 @@ daily_backup --> daily_sql : same audit inside isolated restored database
 nightly_installer --> nightly_scheduler : pin canonical entrypoint; validate scheduler history under lock before retirement
 ' evidence: scripts/ops/nightly-simulation-backup.py:439-455,460-492
 nightly_scheduler --> nightly_sequencer : exact pinned child preflight and bounded apply
-' evidence: scripts/ops/preupgrade-simulation-backup.py:786-842,1134-1161,1356-1369; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2318-2333
+' evidence: scripts/ops/preupgrade-simulation-backup.py:792-848,1146-1173,1368-1381; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2318-2333
 nightly_sequencer --> daily_backup : approved empty or configured OFF scope;\nverify exact archive before returning cohort
-' evidence: scripts/ops/preupgrade-simulation-backup.py:877-893,905-925; scripts/ops/compose-release.sh:1049-1060,1087-1096
+' evidence: scripts/ops/preupgrade-simulation-backup.py:364-384,883-905,917-937; scripts/ops/compose-release.sh:549-560,1074-1081,1101-1110; scripts/ops/lib/owner-beta-daily-operations.py:154-159,814-847
 nightly_sequencer --> daily_wrapper : same-release API-only resume;\nstart simulation only if captured
-' evidence: scripts/ops/preupgrade-simulation-backup.py:927-957,1208-1212,1320-1321
+' evidence: scripts/ops/preupgrade-simulation-backup.py:939-969,1220-1224,1332-1333
 nightly_sequencer --> simulation_operations : operator recovery verifies an interrupted worker start
 
 
@@ -463,7 +463,7 @@ preupgrade_storage --> daily_files : explicit five-class preupgrade profile
 backup_transition --> release_files : protected reads, staging and owned replacement
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:34
 daily_ops --> release_files : protected installed-file operations
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,593-594,604
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:35,601-602,612
 daily_ops --> daily_base : prepare copies; verify before enable
 ' evidence: scripts/ops/lib/owner-beta-daily-base.py:30,96-110,130-180
 daily_base --> release_files : protected reads and exclusive publish
@@ -732,7 +732,7 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
 }
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:5062-5079
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
-' evidence: scripts/ops/lib/owner-beta-daily-operations.py:164-174,177-201
+' evidence: scripts/ops/lib/owner-beta-daily-operations.py:172-182,185-209
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1338-1341,1348-1366
 paper_ops_release --> paper_history_inventory : reader_guard consumes the in-process proof
@@ -806,7 +806,7 @@ package "P5 archive capture, source closure and publication — connected source
 }
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2318-2333; scripts/ops/lib/owner-beta-paper-backup.py:3404-3458,3810-3849
 daily_backup --> paper_archive_capture : exact OFF scope under release lock
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3551-3560,3563-3588; scripts/ops/lib/owner-beta-daily-operations.py:313-337
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3551-3560,3563-3588; scripts/ops/lib/owner-beta-daily-operations.py:321-345
 paper_archive_capture --> daily_ops : select predecessor by read-only SQL in the pinned db-migrate image
 ' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3599-3621,3744,3878-3906; scripts/ops/lib/owner-beta-paper-operations.py:1076-1109,3392-3427,3437
 paper_archive_capture --> paper_ops_cli : re-read predecessor BEGIN; linked BEGIN and fresh exact COMMITTED readback

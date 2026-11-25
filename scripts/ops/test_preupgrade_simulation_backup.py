@@ -38,6 +38,7 @@ def _load(name, path):
 
 tool = _load("preupgrade_simulation_backup_under_test", HERE / "preupgrade-simulation-backup.py")
 ops = _load("preupgrade_test_daily_operations", HERE / "lib" / "owner-beta-daily-operations.py")
+paper_backup = _load("preupgrade_test_paper_backup", HERE / "lib" / "owner-beta-paper-backup.py")
 runtime = ops.runtime
 
 APP = "a1" * 20
@@ -1190,6 +1191,7 @@ class NightlyTests(Base):
         self.paper_archive_count = 0
         self.changed_paper_verify = False
         self.changed_paper_readback = False
+        self.changed_paper_before_api_resume = False
         for digit, (service, identity) in enumerate(self.services.items(), 4):
             image = "sha256:" + format(digit, "x") * 64
             value = beta_container(identity, image)
@@ -1207,6 +1209,49 @@ class NightlyTests(Base):
         value["State"].update(Running=False, Status="exited", ExitCode=0)
         value["HostConfig"]["RestartPolicy"]["Name"] = "no"
 
+    def guard_configured_paper_api_resume(self, argv):
+        expected_control = argv[argv.index("--expected-nightly-daily-control") + 1]
+        expected_origin = argv[argv.index("--expected-nightly-paper-origin") + 1]
+        control = ops.nightly_control(expected_control)
+        self.assertEqual(control, (self.daily_enabled, self.daily_epoch))
+        self.assertEqual(expected_origin, self.paper_proof)
+        context = ops.Context(self.host.release, APP, self.host.images[APP], self.daily_values, [])
+        ownership = ops.Ownership(PROJECT, APP, BETA_IMAGE)
+        operation = ops.Operations(self.docker, self.daily_database, context, context, ownership,
+                                   self.root, "daily", lock_fd=7)
+        config = {"first_auto_session": CONFIG_DATE}
+
+        def read_context(release, commit, mode):
+            self.assertEqual((release, commit), (self.host.release, APP))
+            return self.daily_values, ["-f", "fixture-intraday"] if mode == "enable" else []
+
+        def open_paper_context(source, lock_fd):
+            self.assertEqual(lock_fd, 7)
+            self.assertEqual(source.overlays, [])
+            self.assertEqual(source.values, self.daily_values)
+            self.assertFalse(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+            return contextlib.nullcontext(SimpleNamespace(probe_history=lambda: contextlib.nullcontext(object())))
+
+        observer = mock.Mock()
+        observer.origin_sha256.return_value = ("sha256:" + "1"*64
+                                               if self.changed_paper_before_api_resume else self.paper_proof)
+        paper_ops = SimpleNamespace(open_context=open_paper_context, _ArchiveDeadline=lambda: object(),
+                                   _ConfiguredOffObserver=mock.Mock(return_value=observer))
+        self.events.append(("actual-api-guard", expected_control, expected_origin))
+        with mock.patch.object(ops, "read_context", side_effect=read_context), \
+             mock.patch.object(ops, "activation_binding", return_value=(getattr(self, "daily_binding", None), config)), \
+             mock.patch.object(ops, "daily_reader_floor", return_value=True), \
+             mock.patch.object(ops.install, "check_state"), \
+             mock.patch.object(ops.install, "verify_config", return_value=(config, None)), \
+             mock.patch.object(ops, "load_local", return_value=paper_backup), \
+             mock.patch.object(paper_backup, "_application_context", side_effect=lambda bound: (paper_ops, bound)), \
+             mock.patch.object(paper_backup, "_configured_off_identity", return_value=("account", 0)):
+            try:
+                self.assertEqual(ops.guard_nightly_api(operation, control, paper_origin=expected_origin),
+                                 "NIGHTLY_WRITERS_QUIESCENT")
+            finally:
+                observer.close.assert_called_once()
+
     def run_nightly_child(self, argv, env, timeout):
         if tool.NIGHTLY_API_ONLY in argv:
             daily_api = "--simulation-resume-daily-api" in argv
@@ -1215,7 +1260,12 @@ class NightlyTests(Base):
                 targets = b"api-server web" if self.bad_targets else b"api-server"
                 prefix = b"SIMULATION_DAILY_API_RESUME_TARGETS: " if daily_api else b"SIMULATION_API_RESUME_TARGETS: "
                 return 0, prefix + targets + b"\n", b""
-            if daily_api and self.daily_enabled:
+            if self.configured_paper:
+                try:
+                    self.guard_configured_paper_api_resume(argv)
+                except (runtime.RuntimeErrorCode, paper_backup.PaperBackupError):
+                    return 1, b"", b"compose-release: daily release is not quiescent\n"
+            elif daily_api and self.daily_enabled:
                 self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
                                  f"ENABLED:{self.daily_epoch}")
             else:
@@ -1366,6 +1416,7 @@ class NightlyTests(Base):
         self.daily_epoch = 4
         database = mock.Mock()
         database.nightly_state.side_effect = lambda *args: (self.daily_enabled, self.daily_epoch)
+        database.status.return_value = "DISABLED"
 
         def control(release, commit, env, action):
             self.events.append(("daily-control", action))
@@ -1518,13 +1569,35 @@ class NightlyTests(Base):
             self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
             archives.append(record["nightly_paper_archive"])
             verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
+            guard = self.events.index(("actual-api-guard", "ENABLED:4", self.paper_proof))
             resume = self.events.index(("wrapper", "--simulation-resume-daily-api"))
             readback = self.events.index(("pinned", "nightly-combined-paper-readback", "readback"))
-            self.assertLess(verify, resume)
+            self.assertLess(verify, guard)
+            self.assertLess(guard, resume)
             self.assertLess(resume, readback)
             self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
             self.daily_database.control.assert_not_called()
         self.assertNotEqual(*archives)
+
+    def test_configured_off_api_resume_rejects_changed_source_after_isolated_restore(self):
+        self.configured_paper = self.changed_paper_before_api_resume = True
+        self.combined_fixture(enabled=True)
+        self.assertFailed(self.run_tool(self.combined_argv("--apply", "--nightly")), "PREUPGRADE_RESUME_STEP")
+        self.assertEqual(self.steps()["verify"], "done")
+        self.assertEqual(self.steps()["resume-release"], "failed")
+        self.assertIn(("actual-api-guard", "ENABLED:4", self.paper_proof), self.events)
+        self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
+        self.assertFalse(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+        self.assertFalse(self.progress().get("nightly_completed", False))
+
+    def test_configured_off_api_resume_binds_the_disabled_daily_epoch(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 0, result)
+        self.assertIn(("actual-api-guard", "DISABLED:4", self.paper_proof), self.events)
+        self.assertEqual((self.daily_enabled, self.daily_epoch), (False, 4))
+        self.daily_database.control.assert_not_called()
 
     def test_configured_off_nightly_with_unverified_digest_never_resumes_api(self):
         self.configured_paper = self.changed_paper_verify = True
@@ -1660,6 +1733,46 @@ class NightlyTests(Base):
             with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
                 ops.guard_nightly_api(operation, (True, 4))
         self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+        self.daily_database.control.assert_not_called()
+
+    def test_actual_legacy_nightly_api_guard_validates_absence_with_daily_read_overlay(self):
+        self.combined_fixture(enabled=True)
+        binding = self.daily_binding
+        images = {**self.host.images[APP], "paper-scheduler": "sha256:" + "9" * 64}
+        context = ops.Context(self.host.release, APP, images, self.daily_values, [])
+        operation = ops.Operations(self.docker, self.daily_database, context, context, binding,
+                                   self.root, "daily", lock_fd=7)
+        config = {"first_auto_session": CONFIG_DATE}
+        paper_ops = paper_backup._local("owner_beta_paper_backup_operations", "owner-beta-paper-operations.py")
+        inventory = mock.Mock()
+        inventory._presence = paper_ops._HISTORY_EMPTY
+        daily_overlay = ["-f", self.host.release + "/deploy/compose/compose.intraday.yml"]
+
+        def read_context(release, commit, mode):
+            self.assertEqual((release, commit), (self.host.release, APP))
+            return self.daily_values, daily_overlay if mode == "enable" else []
+
+        def open_paper_context(source, lock_fd):
+            self.assertEqual(lock_fd, 7)
+            tree = SimpleNamespace(names=Path(self.root).parts[1:])
+            paper_ops._manifest_and_context(source, tree)
+            return contextlib.nullcontext(SimpleNamespace(probe_history=lambda: contextlib.nullcontext(inventory)))
+
+        with mock.patch.object(ops, "read_context", side_effect=read_context), \
+             mock.patch.object(ops, "load_local", return_value=paper_backup), \
+             mock.patch.object(ops, "activation_binding", return_value=(binding, config)), \
+             mock.patch.object(ops.install, "check_state"), \
+             mock.patch.object(paper_ops.daily, "read_context", side_effect=read_context), \
+             mock.patch.object(paper_ops.daily, "read_manifest", return_value=images), \
+             mock.patch.object(paper_ops.daily, "project_binding", return_value=(PROJECT, "daily")), \
+             mock.patch.object(paper_ops, "open_context", side_effect=open_paper_context):
+            runtime.drain(self.docker, binding, runtime.verify_running(self.docker, binding))
+            self.assertEqual(ops.guard_nightly_api(operation, (True, 4)), "NIGHTLY_WRITERS_QUIESCENT")
+            self.assertEqual(context.overlays, daily_overlay)
+            inventory.revalidate.assert_called_once()
+            inventory._presence = object()
+            with self.assertRaisesRegex(runtime.RuntimeErrorCode, "DAILY_BACKUP_NIGHTLY_BINDING"):
+                ops.guard_nightly_api(operation, (True, 4))
         self.daily_database.control.assert_not_called()
 
     def test_combined_nightly_prepare_rejects_unhealthy_daily_before_mutation(self):

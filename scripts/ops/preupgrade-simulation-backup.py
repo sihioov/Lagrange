@@ -361,7 +361,8 @@ class Sequencer:
             require(self.environ.get(name) == value, "PREUPGRADE_CONFIRMATION")
         return {name for name, _ in required}
 
-    def wrapper(self, flag, timeout, *, api_only=False, daily_api=False, daily_epoch=None, mode="apply"):
+    def wrapper(self, flag, timeout, *, api_only=False, daily_api=False, daily_control=None, paper_origin=None,
+                mode="apply"):
         a = self.args
         path = rg.trusted_chain(a.install_root, "releases/" + a.application_commit + "/" + WRAPPER,
                                 self.uid, "PREUPGRADE_RESUME_STEP")
@@ -373,9 +374,14 @@ class Sequencer:
         if daily_api:
             require(api_only and self.combined, NIGHTLY_ERROR)
             argv.append("--simulation-resume-daily-api")
-        if daily_epoch is not None:
-            require(daily_api and mode == "apply", NIGHTLY_ERROR)
-            argv.extend(("--expected-nightly-daily-control", f"ENABLED:{daily_epoch}"))
+        if daily_control is not None:
+            enabled, epoch = daily_control
+            require(api_only and mode == "apply" and (daily_api if enabled else paper_origin is not None),
+                    NIGHTLY_ERROR)
+            argv.extend(("--expected-nightly-daily-control", f"{'ENABLED' if enabled else 'DISABLED'}:{epoch}"))
+        if paper_origin is not None:
+            require(daily_control is not None and PAPER_ARCHIVE_DIGEST.fullmatch(paper_origin), NIGHTLY_ERROR)
+            argv.extend(("--expected-nightly-paper-origin", paper_origin))
         code, out, err = self.runner(argv, env, timeout)
         self.passthrough(err, WRAPPER_STDERR)
         return code, rg.stdout_lines(out or b"")
@@ -876,8 +882,14 @@ class Sequencer:
 
         def body(_):
             kwargs = {"daily_api": True} if daily_api else {}
-            if expect_stopped:
-                kwargs["daily_epoch"] = record["nightly"]["daily_epoch"]
+            configured_off = self.combined and record["nightly"].get("paper_configured_off") is True
+            if expect_stopped or configured_off:
+                kwargs["daily_control"] = (expect_stopped, record["nightly"]["daily_epoch"])
+            if configured_off:
+                origin = record.get("nightly_paper_origin")
+                require(self.states(record)["verify"] == "done" and type(origin) is str
+                        and origin == record["nightly"].get("paper_preflight_origin"), NIGHTLY_ERROR)
+                kwargs["paper_origin"] = origin
             code, lines = self.wrapper("--simulation-release-start", TIMEOUTS["release"], api_only=nightly, **kwargs)
             require(code == 0 and lines and lines[-1] == (NIGHTLY_API_LINE if nightly else RELEASE_LINE),
                     "PREUPGRADE_RESUME_STEP")

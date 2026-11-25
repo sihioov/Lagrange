@@ -151,6 +151,14 @@ def read_context(release, commit, action, *, expected_env_sha256=None):
     return values, overlays
 
 
+def paper_prefix_context(context):
+    """Match Paper's disable-context reread while retaining Daily's verified values."""
+    # Only the Daily enable context emits read-only KIS Compose overlays.
+    values, overlays = read_context(context.release, context.commit, "disable")
+    require(values == context.values, "DAILY_BACKUP_CONTEXT")
+    return dataclasses.replace(context, values=values, overlays=overlays)
+
+
 def project_binding(source_commit, target_commit):
     if not policy.optional_trusted_file_exists(policy.POLICY_PATH, parent_mode=0o700):
         return "lagrange-station", "absent"
@@ -793,28 +801,49 @@ def quiescence(operations, floor, *, check_database=True):
     return "QUIESCENT"
 
 
-def guard_nightly_api(operation, expected):
+def daily_reader_floor(install_root):
+    with install.root_directory(install_root) as parent:
+        try:
+            floor = install.read_file(parent, install.FLOOR_NAME, 0, 0, 0o600)
+        except FileNotFoundError:
+            return False
+    require(floor == install.FLOOR_BYTES, "DAILY_OPERATION_READER")
+    return True
+
+
+def guard_nightly_api(operation, expected, *, paper_origin=None):
     """The API-only handoff leaves the exact Daily writers stopped."""
     source = operation.source
-    require(expected[0] is True and source.commit == operation.target.commit and
-            operation.lock_fd is not None, "DAILY_BACKUP_NIGHTLY_BINDING")
+    require((expected[0] is True or paper_origin is not None) and source.commit == operation.target.commit and
+            operation.lock_fd is not None and (paper_origin is None or
+                type(paper_origin) is str and runtime.DIGEST.fullmatch(paper_origin)), "DAILY_BACKUP_NIGHTLY_BINDING")
     source.values, source.overlays = read_context(source.release, source.commit, "enable")
     reject_ambient(source.values)
     paper = load_local("daily_nightly_paper_backup", "owner-beta-paper-backup.py")
-    require(paper.inspect_presence(source, operation.lock_fd) == "LEGACY_EMPTY",
-            "DAILY_BACKUP_NIGHTLY_BINDING")
-    binding, config = activation_binding(source.release, source.commit, operation.ownership.project,
-                                         source.images, source.values, lock_fd=operation.lock_fd)
-    install.check_state(binding.data_root, config)
-    docker = operation.docker
-    global_cohort(docker, binding)
-    snapshot = runtime.capture(docker, binding)
-    require(set(snapshot) == set(runtime.SERVICES), "DAILY_BACKUP_NIGHTLY_COHORT")
-    for service, entry in snapshot.items():
-        value = runtime.unchanged(docker, binding, service, entry, 15)
-        runtime.verify_policy(docker, binding, service, value, stopped_for_backup=True)
-    require(operation.database.nightly_state(source.release, source.commit, source.values,
+    paper_context = paper_prefix_context(source)
+    if paper_origin is None:
+        require(paper.inspect_presence(paper_context, operation.lock_fd) == "LEGACY_EMPTY",
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+    values = source.values
+    if expected[0]:
+        binding, config = activation_binding(source.release, source.commit, operation.ownership.project,
+                                             source.images, values, lock_fd=operation.lock_fd)
+        install.check_state(binding.data_root, config)
+        docker = operation.docker
+        global_cohort(docker, binding)
+        snapshot = runtime.capture(docker, binding)
+        require(set(snapshot) == set(runtime.SERVICES), "DAILY_BACKUP_NIGHTLY_COHORT")
+        for service, entry in snapshot.items():
+            value = runtime.unchanged(docker, binding, service, entry, 15)
+            runtime.verify_policy(docker, binding, service, value, stopped_for_backup=True)
+    else:
+        require(quiescence(operation, daily_reader_floor(operation.install_root)) == "QUIESCENT",
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+        config, _ = install.verify_config(source.release, source.commit)
+    require(operation.database.nightly_state(source.release, source.commit, values,
             config["first_auto_session"]) == expected, "DAILY_BACKUP_NIGHTLY_BINDING")
+    if paper_origin is not None:
+        paper.observe_nightly_paper(paper_context, operation.lock_fd, expected, paper_origin)
     return "NIGHTLY_WRITERS_QUIESCENT"
 
 
@@ -854,10 +883,12 @@ def main(argv=None):
     parser.add_argument("--from-commit")
     parser.add_argument("--lock-fd")
     parser.add_argument("--expected-nightly-daily-control")
+    parser.add_argument("--expected-nightly-paper-origin")
     try:
         args = parser.parse_args(argv)
         nightly_api = args.operation == "guard-nightly-api"
         require((args.expected_nightly_daily_control is not None) == nightly_api and
+                (args.expected_nightly_paper_origin is None or nightly_api) and
                 (not nightly_api or (args.from_commit is None and args.mode == "apply")),
                 "DAILY_OPERATION_ARGUMENTS")
         rebind = args.operation == "rebind-first-session"
@@ -897,16 +928,11 @@ def main(argv=None):
             operation = Operations(docker, database, source, target, own,
                                    args.install_root, research_mode, lock_fd)
             if nightly_api:
-                outcome = guard_nightly_api(operation, nightly_control(args.expected_nightly_daily_control))
+                outcome = guard_nightly_api(operation, nightly_control(args.expected_nightly_daily_control),
+                                            paper_origin=args.expected_nightly_paper_origin)
             elif args.operation in guards:
                 require(args.mode == "apply", "DAILY_OPERATION_ARGUMENTS")
-                with install.root_directory(args.install_root) as parent:
-                    try:
-                        floor = install.read_file(parent, install.FLOOR_NAME, 0, 0, 0o600)
-                        require(floor == install.FLOOR_BYTES, "DAILY_OPERATION_READER")
-                    except FileNotFoundError:
-                        floor = None
-                outcome = quiescence(operation, floor is not None,
+                outcome = quiescence(operation, daily_reader_floor(args.install_root),
                                      check_database=args.operation == "guard")
             else:
                 global_cohort(docker, own, allow_foreign_manual_worker=not rebind)
