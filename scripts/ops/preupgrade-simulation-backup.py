@@ -133,6 +133,13 @@ printf 'equity=%s\nquotes=%s\ntransport=%s\n' "$equity" \
 PLAN_LINE = "INACTIVE_SIMULATION_PLAN: "
 NIGHTLY_PLAN_SUFFIX = "; paper_history=legacy_empty_required; inactive_daily_preflight=pinned_dates"
 PREFLIGHT_LINE = "DAILY_BACKUP: PREFLIGHT"
+PAPER_PREFLIGHT_LINE = "DAILY_BACKUP: NIGHTLY_PAPER_CONFIGURED_OFF"
+PAPER_BACKUP_LINE = "DAILY_BACKUP: NIGHTLY_PAPER_CONFIGURED_OFF_VERIFIED_SOURCE_UNCHANGED"
+PAPER_VERIFY_LINE = "DAILY_BACKUP: NIGHTLY_PAPER_CONFIGURED_OFF_VERIFIED_ISOLATED_DISABLED"
+PAPER_ARCHIVE_PREFIX = "DAILY_BACKUP: NIGHTLY_PAPER_ARCHIVE "
+PAPER_ORIGIN_PREFIX = "DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN "
+PAPER_READBACK_LINE = "DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN_UNCHANGED"
+PAPER_ARCHIVE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 BACKUP_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_DISABLED"
 VERIFY_LINE = "DAILY_BACKUP: INACTIVE_SIMULATION_VERIFIED_ISOLATED_DISABLED"
 # Exact final line of the installed 312 compose-release.sh (CR:1063).
@@ -168,12 +175,14 @@ def parse(argv):
         parser.add_argument(option, required=True)
     parser.add_argument("--step", choices=tuple(GROUPS))
     parser.add_argument("--backup-profile", choices=("daily-simulation",))
+    parser.add_argument("--expected-nightly-paper-profile", choices=("LEGACY_EMPTY", "CONFIGURED_OFF"))
     parser.add_argument("--nightly", action="store_true",
                         help="Use a fresh journal and resume only the captured running cohort.")
     rg.reject_repeated(argv, ("--plan", "--preflight", "--apply", "--install-root", "--application-commit",
                               "--tool-commit", "--config-file", "--expected-db-first-session",
                               "--expected-config-first-session", "--stopped-worker-from-commit",
-                              "--state-dir", "--step", "--nightly", "--backup-profile"), "PREUPGRADE_ARGUMENTS")
+                              "--state-dir", "--step", "--nightly", "--backup-profile",
+                              "--expected-nightly-paper-profile"), "PREUPGRADE_ARGUMENTS")
     args = parser.parse_args(argv)
     require(rg.absolute(args.install_root) and rg.absolute(args.config_file) and rg.absolute(args.state_dir)
             and rg.is_commit(args.application_commit) and rg.is_commit(args.tool_commit)
@@ -182,6 +191,8 @@ def parse(argv):
             and (args.expected_db_first_session == args.expected_config_first_session if args.backup_profile
                  else args.expected_db_first_session < args.expected_config_first_session)
             and (not args.backup_profile or args.nightly or (args.mode == "apply" and args.step == "recover"))
+            and (args.expected_nightly_paper_profile is None or args.backup_profile
+                 and args.nightly and args.mode == "apply")
             and (args.step is None or args.mode == "apply")
             and (not args.nightly or (args.mode in ("apply", "preflight") and args.step in (None, "all"))),
             "PREUPGRADE_ARGUMENTS")
@@ -296,10 +307,20 @@ class Sequencer:
                 "--expected-db-first-session", a.expected_db_first_session,
                 "--expected-config-first-session", a.expected_config_first_session,
                 "--stopped-worker-from-commit", a.stopped_worker_from_commit]
-        if self.combined and mode == "apply":
+        if self.combined and mode in {"apply", "readback"}:
             original = record["nightly"]
             state = "ENABLED" if original["daily_enabled"] else "DISABLED"
             argv.extend(("--expected-nightly-daily-control", f"{state}:{original['daily_epoch']}"))
+            if original.get("paper_configured_off") is True:
+                argv.append("--expected-nightly-paper-off")
+                if operation == "nightly-combined-verify":
+                    archive = record.get("nightly_paper_archive")
+                    require(type(archive) is str and PAPER_ARCHIVE_DIGEST.fullmatch(archive), NIGHTLY_ERROR)
+                    argv.extend(("--expected-nightly-paper-archive", archive))
+                elif operation == "nightly-combined-paper-readback":
+                    origin = record.get("nightly_paper_origin")
+                    require(type(origin) is str and PAPER_ARCHIVE_DIGEST.fullmatch(origin), NIGHTLY_ERROR)
+                    argv.extend(("--expected-nightly-paper-origin", origin))
         code, out, err = self.runner(argv, rg.child_environment(), timeout)
         self.passthrough(err, PINNED_STDERR)
         return code, rg.stdout_lines(out or b"")
@@ -770,11 +791,24 @@ class Sequencer:
         def body(_):
             code, lines = self.pinned(self.backup_operation("backup"), "apply", TIMEOUTS["backup"], record=record)
             expected = "DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED" if self.combined else BACKUP_LINE
-            require(code == 0 and lines == [expected], "PREUPGRADE_BACKUP_STEP")
+            paper_configured_off = record.get("nightly", {}).get("paper_configured_off") is True
+            archive = origin = None
+            if paper_configured_off:
+                require(code == 0 and lines is not None and len(lines) == 3 and lines[0] == PAPER_BACKUP_LINE
+                        and lines[1].startswith(PAPER_ARCHIVE_PREFIX) and lines[2].startswith(PAPER_ORIGIN_PREFIX),
+                        "PREUPGRADE_BACKUP_STEP")
+                archive = lines[1][len(PAPER_ARCHIVE_PREFIX):]
+                origin = lines[2][len(PAPER_ORIGIN_PREFIX):]
+                require(PAPER_ARCHIVE_DIGEST.fullmatch(archive) and PAPER_ARCHIVE_DIGEST.fullmatch(origin),
+                        "PREUPGRADE_BACKUP_STEP")
+            else:
+                require(code == 0 and lines == [expected], "PREUPGRADE_BACKUP_STEP")
             handoff = self.handoff(("switched",), "PREUPGRADE_BACKUP_STEP")
             if "nightly" in record:
                 self.check_nightly_handoff(record, handoff)
             self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
+            if archive is not None:
+                return {"nightly_paper_archive": archive, "nightly_paper_origin": origin}
         return self.execute(record, "backup", "PREUPGRADE_BACKUP_STEP", body)
 
     def step_verify(self, record):
@@ -788,7 +822,12 @@ class Sequencer:
         def body(_):
             code, lines = self.pinned(self.backup_operation("verify"), "apply", TIMEOUTS["verify"], record=record)
             expected = "DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED" if self.combined else VERIFY_LINE
-            require(code == 0 and lines == [expected], "PREUPGRADE_VERIFY_STEP")
+            if record.get("nightly", {}).get("paper_configured_off") is True:
+                require(code == 0 and lines == [PAPER_VERIFY_LINE,
+                        PAPER_ARCHIVE_PREFIX + record["nightly_paper_archive"],
+                        PAPER_ORIGIN_PREFIX + record["nightly_paper_origin"]], "PREUPGRADE_VERIFY_STEP")
+            else:
+                require(code == 0 and lines == [expected], "PREUPGRADE_VERIFY_STEP")
             require(self.handoff(("switched",), "PREUPGRADE_VERIFY_STEP") == before, "PREUPGRADE_VERIFY_STEP")
             self.stopped_beta(beta, [rg.STOPPED_POLICY], "PREUPGRADE_BETA_CHANGED")
         return self.execute(record, "verify", "PREUPGRADE_VERIFY_STEP", body)
@@ -1094,10 +1133,16 @@ class Sequencer:
                 "PREUPGRADE_OBSERVER")
         self.pinned_plan()
         code, lines = self.pinned(self.backup_operation("backup"), "preflight", TIMEOUTS["preflight"])
-        require(code == 0 and lines == [PREFLIGHT_LINE], "PREUPGRADE_TOOL")
+        paper_configured_off = self.combined and lines == [PREFLIGHT_LINE, PAPER_PREFLIGHT_LINE]
+        require(code == 0 and (lines == [PREFLIGHT_LINE] or paper_configured_off), "PREUPGRADE_TOOL")
+        expected_paper = self.args.expected_nightly_paper_profile
+        require(expected_paper is None or (expected_paper == "CONFIGURED_OFF") == paper_configured_off,
+                NIGHTLY_ERROR)
         required = self.check_confirmations()
         if self.args.nightly:
             self.nightly_capture = self.capture_nightly(timer)
+            if paper_configured_off:
+                self.nightly_capture["paper_configured_off"] = True
         return timer, required
 
     def states(self, record):
@@ -1270,6 +1315,13 @@ class Sequencer:
             require(all(self.states(record)[name] == "done" for name in STEPS), "PREUPGRADE_PROGRESS")
             if self.combined:
                 record = self.resume_nightly_daily(record)
+                if record["nightly"].get("paper_configured_off") is True:
+                    code, lines = self.pinned("nightly-combined-paper-readback", "readback",
+                                              TIMEOUTS["preflight"], record=record)
+                    if code != 0 or lines != [PAPER_READBACK_LINE]:
+                        self.progress.replace(record, dict(record, nightly_final_failure=NIGHTLY_ERROR))
+                        raise ToolError(NIGHTLY_ERROR)
+                    record = self.progress.replace(record, dict(record, nightly_paper_origin_unchanged=True))
             record = self.progress.replace(record, dict(record, nightly_completed=True))
         if all(self.states(record)[n] == "done" for n in STEPS):
             captured = record.get(WORKER_DECISION)
@@ -1348,6 +1400,8 @@ def main(argv=None, *, host_factory=None, uid=None, runner=None, environ=None, o
                           + ("enabled" if capture["daily_enabled"] else "disabled")
                           + " api=" + ("owner_only" if capture["daily_api"] else "disabled")
                           + f" epoch={capture['daily_epoch']}", file=out)
+                    if capture.get("paper_configured_off") is True:
+                        print("PREUPGRADE_BACKUP: NIGHTLY_PAPER CONFIGURED_OFF", file=out)
             print("PREUPGRADE_BACKUP: PREFLIGHT", file=out)
             return 0
         sequencer.progress.lock()

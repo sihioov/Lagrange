@@ -461,47 +461,54 @@ fn compare_descriptors(
     groups: &BTreeMap<&str, FrameRoot>,
     sources: market_data::paper_archive_sources::closure::ArchiveSourceDescription,
 ) -> Result<(), ErrorCode> {
-    if !exact_keys(
-        archive,
-        &[
-            "schema",
-            "installation_id",
-            "generation",
-            "account_id",
-            "profile",
-            "control_epoch",
-            "drain_receipt_sha256",
-            "created_at",
-            "release_manifest_sha256",
-            "capability_sha256",
-            "database_dump_sha256",
-            "database_snapshot_sha256",
-            "audit_sha256",
-            "files_sha256",
-            "classes",
-        ],
-    ) || !exact_keys(
-        audit,
-        &[
-            "schema",
-            "installation_id",
-            "generation",
-            "account_id",
-            "control_epoch",
-            "audit_sql_sha256",
-            "migration_0068_sha256",
-            "groups",
-        ],
-    ) || archive["profile"] != "paper-combined"
+    let configured_off =
+        wire::configured_off_archive(archive).map_err(|_| ErrorCode::WireInvalid)?;
+    let archive_fields = [
+        "schema",
+        "installation_id",
+        "generation",
+        "account_id",
+        "profile",
+        "control_epoch",
+        "created_at",
+        "release_manifest_sha256",
+        "capability_sha256",
+        "database_dump_sha256",
+        "database_snapshot_sha256",
+        "audit_sha256",
+        "files_sha256",
+        "classes",
+        if configured_off {
+            "source_proof"
+        } else {
+            "drain_receipt_sha256"
+        },
+    ];
+    if !exact_keys(archive, &archive_fields)
+        || !exact_keys(
+            audit,
+            &[
+                "schema",
+                "installation_id",
+                "generation",
+                "account_id",
+                "control_epoch",
+                "audit_sql_sha256",
+                "migration_0068_sha256",
+                "groups",
+            ],
+        )
         || archive["installation_id"] == intent.installation_id.to_string()
-        || archive["generation"] != intent.value["predecessor_generation"]
+        || archive["generation"] == intent.generation.to_string()
+        || (!configured_off
+            && (archive["generation"] != intent.value["predecessor_generation"]
+                || !sha256_wire(&archive["drain_receipt_sha256"])))
         || archive["account_id"] != intent.value["account_id"]
         || archive["control_epoch"] != intent.expected_epoch
         || !["installation_id", "generation", "account_id"]
             .iter()
             .all(|key| canonical_uuid(&archive[*key]))
         || ![
-            "drain_receipt_sha256",
             "release_manifest_sha256",
             "capability_sha256",
             "database_dump_sha256",
@@ -533,11 +540,19 @@ fn compare_descriptors(
     {
         return Err(ErrorCode::WireInvalid);
     }
-    let binding = json!({"domain":"lagrange-paper-snapshot-binding-v1",
+    let domain = if configured_off {
+        "lagrange-paper-snapshot-binding-v2"
+    } else {
+        "lagrange-paper-snapshot-binding-v1"
+    };
+    let mut binding = json!({"domain":domain,
         "installation_id":archive["installation_id"],"generation":archive["generation"],
         "account_id":archive["account_id"],"control_epoch":archive["control_epoch"],
         "database_dump_sha256":archive["database_dump_sha256"],
         "audit_stream_sha256":sources.audit_stream_sha256,"files_sha256":archive["files_sha256"]});
+    if configured_off {
+        binding["source_proof"] = archive["source_proof"].clone();
+    }
     if archive["database_snapshot_sha256"] != digest(canonical_text(&binding)?.as_bytes()) {
         return Err(ErrorCode::IdentityConflict);
     }
@@ -574,7 +589,7 @@ impl CheckedArchive<'_> {
     pub(super) fn revalidate(&mut self) -> Result<(), ErrorCode> {
         self.sandbox.revalidate()?;
         if self.operation_started.elapsed() >= Duration::from_secs(15)
-            || self.archive()["schema"] != "owner-beta-paper-archive-v1"
+            || wire::configured_off_archive(self.archive()).is_err()
             || self.audit()["schema"] != "owner-beta-paper-audit-v1"
         {
             return Err(ErrorCode::EvidenceUnavailable);
@@ -627,7 +642,7 @@ pub(super) async fn with_verified_archive(
         let audit_bytes = audit_file.read_bounded(65_536).map_err(|_| ErrorCode::EvidenceUnavailable)?;
         let audit_value = wire::parse_canonical(&audit_bytes).map_err(|_| ErrorCode::WireInvalid)?;
         if archive_value["audit_sha256"] != digest(&audit_bytes)
-            || archive_value["schema"] != "owner-beta-paper-archive-v1"
+            || wire::configured_off_archive(&archive_value).is_err()
             || audit_value["schema"] != "owner-beta-paper-audit-v1"
             || ["installation_id", "generation", "account_id", "control_epoch"].iter()
                 .any(|key| archive_value[*key] != audit_value[*key]) {
@@ -733,7 +748,11 @@ pub(super) async fn with_verified_archive(
             // retained indexes have consumed their share of the original caps.
             let mut domain_budget = DomainBudget::remaining(caps, used_rows,
                 source_dataset_rows.len(), datasets.len(), dataset_rows.len(), budget)?;
-            let domains = std::cell::RefCell::new(domains::Domains::until(domain_budget.rows, domain_budget.bytes, deadline));
+            let configured_off = archive_value["schema"] == wire::CONFIGURED_OFF_ARCHIVE_SCHEMA;
+            let domains = std::cell::RefCell::new(
+                domains::Domains::until(domain_budget.rows, domain_budget.bytes, deadline)
+                    .configured_off_archive(configured_off),
+            );
             owner.visit_database_rows(|| Instant::now() < deadline,
                 |member| domains.borrow_mut().observe(member))
                 .map_err(|_| ErrorCode::EvidenceUnavailable)?;
@@ -744,7 +763,11 @@ pub(super) async fn with_verified_archive(
                 |member| domains.borrow_mut().observe(member),
                 || {
                     let domains = domains.borrow();
-                    complete_domains(&domains, &mut domain_budget, &archive_value, &audit_value)
+                    complete_domains(&domains, &mut domain_budget, &archive_value, &audit_value)?;
+                    if configured_off {
+                        domains.verify_configured_off_source(&archive_value, &intent.value["predecessor_generation"])?;
+                    }
+                    Ok(())
                 },
             );
             // Only this private complete domain consumer precedes CheckedArchive.

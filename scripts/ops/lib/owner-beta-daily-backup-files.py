@@ -763,6 +763,7 @@ def database_references(manifest, database, *, nightly=None):
                 and type(nightly[0]) is bool and type(nightly[1]) is int and 1 <= nightly[1] < 2**63
                 and control["enabled"] is nightly[0] and control["activation_epoch"] == nightly[1],
                 "DAILY_BACKUP_NIGHTLY_BINDING")
+        schemas.add("lagrange-paper-combined-files-v1")
     require(isinstance(manifest, dict) and manifest.get("schema") in
             schemas
             and isinstance(manifest.get("entries"), list))

@@ -101,6 +101,14 @@ class NightlyTests(unittest.TestCase):
         self.assertFalse(nightly.complete(record))
         record["steps"][nightly.DAILY_RESUME_STEP] = {"state": "done", "code": None}
         self.assertTrue(nightly.complete(record))
+        record["nightly"] = {"paper_configured_off": True}
+        self.assertFalse(nightly.complete(record))
+        record.update(nightly_paper_archive="sha256:" + "1"*64,
+                      nightly_paper_origin="sha256:" + "2"*64,
+                      nightly_paper_origin_unchanged=True)
+        self.assertTrue(nightly.complete(record))
+        record["nightly_paper_origin"] = "archive receipt is not a source proof"
+        self.assertFalse(nightly.complete(record))
 
     def write_credentials(self):
         credentials = Path(self.layout.config_root) / "nightly-simulation" / self.commit

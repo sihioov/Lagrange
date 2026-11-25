@@ -3588,6 +3588,103 @@ async fn paper_0067_calendar_agreement_conflict_coverage_and_observation() -> Da
 
 #[tokio::test]
 #[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
+async fn paper_configured_off_nightly_source_fence_and_exported_audit() -> Daily0060Result {
+    let db = Daily0060Db::new(require_r5_03_database_url()?, 71).await?;
+    let migration = login_without_actor(&db, "migration_owner", 4).await?;
+    let research = login_without_actor(&db, "research_writer", 1).await?;
+    let result: Daily0060Result = async {
+        let (account, _, _) = configure(&db).await?;
+        let source_sql = include_str!("../../../../deploy/db/owner-beta-paper-off-source-fence.sql");
+        let origin = || {
+            sqlx::query_scalar::<_, Value>(
+                "SELECT jsonb_build_array(to_jsonb(p),to_jsonb(d), \
+                 (SELECT count(*) FROM owner_beta_paper_events), \
+                 (SELECT count(*) FROM owner_beta_paper_operations)) \
+                 FROM owner_beta_paper_control p JOIN owner_beta_daily_control d USING (owner_user_id)",
+            )
+        };
+        let before = origin().fetch_one(&db.owner).await?;
+        assert_eq!(before[0]["state"], "OFF");
+        assert_eq!(before[0]["control_epoch"], 0);
+        assert_eq!(before[1]["enabled"], true);
+        let mut guard = migration.acquire().await?;
+        sqlx::raw_sql(source_sql).execute(&mut *guard).await?;
+
+        let mut contender = migration.acquire().await?;
+        denied(sqlx::raw_sql(source_sql).execute(&mut *contender).await, "55P03");
+        sqlx::query("ROLLBACK").execute(&mut *contender).await?;
+        let consent = sqlx::query_scalar::<_, Value>(
+            "SELECT record_owner_beta_paper_consent_v1(\
+             $1,0,'owner-beta-paper-v1-draft-1',$2,true,'api-paper-consent:nightly-fixture')",
+        )
+        .bind(account)
+        .bind(financial_contract()["contract_sha256"].as_str().unwrap().to_owned());
+        denied(consent.fetch_one(&db.app).await, "55P03");
+
+        let mut competing = migration.begin().await?;
+        sqlx::query("SET LOCAL lock_timeout='300ms'").execute(&mut *competing).await?;
+        let intent = sql_operation_intent(account, Uuid::new_v4(), None, 0);
+        denied(
+            sqlx::query("SELECT begin_owner_beta_paper_operation_v1(0,$1,$2)")
+                .bind(&intent)
+                .bind(intent["request_key"].as_str().unwrap())
+                .execute(&mut *competing)
+                .await,
+            "55P03",
+        );
+        competing.rollback().await?;
+
+        let mut exported = migration.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *exported)
+            .await?;
+        let snapshot: String = sqlx::query_scalar("SELECT pg_export_snapshot()")
+            .fetch_one(&mut *exported)
+            .await?;
+        assert!((3..=64).contains(&snapshot.len())
+            && snapshot.bytes().all(|c| c.is_ascii_hexdigit() || c == b'-'));
+        sqlx::query(
+            "WITH db_clock AS MATERIALIZED (SELECT clock_timestamp() AS at) \
+             INSERT INTO public.research_execution_status \
+             (id, attempt_started_at, heartbeat_at, attempt_state, target_session, updated_at) \
+             SELECT 'kis-eod', at, at, 'RUNNING', CURRENT_DATE, at FROM db_clock",
+        )
+        .execute(&research)
+        .await?;
+        let status = || sqlx::query_scalar::<_, i64>("SELECT count(*) FROM public.research_execution_status");
+        assert_eq!(status().fetch_one(&research).await?, 1);
+        let mut audit = migration.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            .execute(&mut *audit)
+            .await?;
+        // PostgreSQL requires a literal here. The server-issued token above
+        // contains only hex digits and dashes.
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SET TRANSACTION SNAPSHOT '{snapshot}'"
+        )))
+        .execute(&mut *audit)
+        .await?;
+        assert_eq!(status().fetch_one(&mut *audit).await?, 0);
+        sqlx::raw_sql(include_str!("../../../../deploy/db/owner-beta-paper-audit.sql"))
+            .execute(&mut *audit)
+            .await?;
+        audit.rollback().await?;
+        exported.rollback().await?;
+        assert_eq!(origin().fetch_one(&db.owner).await?, before);
+        sqlx::query("ROLLBACK").execute(&mut *guard).await?;
+        sqlx::raw_sql(source_sql).execute(&mut *contender).await?;
+        sqlx::query("ROLLBACK").execute(&mut *contender).await?;
+        assert_eq!(origin().fetch_one(&db.owner).await?, before);
+        Ok(())
+    }.await;
+    research.close().await;
+    migration.close().await;
+    db.close().await?;
+    result
+}
+
+#[tokio::test]
+#[ignore = "requires Root's fresh R5-03 disposable PostgreSQL manifest"]
 async fn paper_0071_consent_does_not_enqueue_a_generic_recommendation() -> Daily0060Result {
     let db = Daily0060Db::new(require_r5_03_database_url()?, 70).await?;
     let migration = login_without_actor(&db, "migration_owner", 1).await?;

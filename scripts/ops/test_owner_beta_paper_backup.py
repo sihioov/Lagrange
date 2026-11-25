@@ -45,7 +45,7 @@ class ArchiveAuditSelectionTests(unittest.TestCase):
                 binding = dict(keys, domain="lagrange-paper-snapshot-binding-v1",
                                database_dump_sha256=digest(b"dump"),
                                audit_stream_sha256=digest(b"audit"), files_sha256=digest(b"files"))
-                archive_bytes = canonical(dict(keys,
+                archive_bytes = canonical(dict(keys, schema=backup._ARCHIVE_V1, profile="paper-combined",
                     database_dump_sha256=binding["database_dump_sha256"],
                     files_sha256=binding["files_sha256"], audit_sha256=digest(audit_bytes),
                     database_snapshot_sha256=digest(canonical(binding)),
@@ -65,7 +65,7 @@ class ArchiveAuditSelectionTests(unittest.TestCase):
                 sql = types.SimpleNamespace(sha256=selected, size=32, revalidate=mock.Mock())
                 capability = source("capability.json", reader_bytes)
                 files = object()
-                package.owner = types.SimpleNamespace(
+                package.owner = types.SimpleNamespace(expected_configured_off=None,
                     sources=[types.SimpleNamespace(sha256=current, revalidate=mock.Mock())],
                     selection=types.SimpleNamespace(
                         _backup_module=lambda: types.SimpleNamespace(files=files)))
@@ -81,6 +81,24 @@ class ArchiveAuditSelectionTests(unittest.TestCase):
                 self.assertIs(package.archive_audit_sql, sql)
                 sql.revalidate.assert_called_once_with(files)
                 capability.revalidate.assert_called_once_with(files)
+
+    def test_configured_off_proof_changes_the_snapshot_binding_and_keeps_epoch_zero(self):
+        proof = dict(schema=backup._CONFIGURED_OFF_PROOF,
+                     paper_control_sha256="sha256:"+"a"*64,
+                     daily_control_sha256="sha256:"+"b"*64)
+        archive = dict(schema=backup._ARCHIVE_V2, profile=backup._CONFIGURED_OFF_PROFILE,
+                       installation_id="source", generation="archive", account_id="account",
+                       control_epoch=0, source_proof=proof)
+        binding = backup._snapshot_binding(archive, "dump", "stream", "files")
+        self.assertEqual(binding["domain"], "lagrange-paper-snapshot-binding-v2")
+        self.assertEqual(binding["source_proof"], proof)
+        self.assertEqual(backup._restore_source_epoch(archive), 0)
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DESCRIPTOR_BINDING"):
+            backup._snapshot_binding(dict(archive, drain_receipt_sha256="sha256:"+"d"*64),
+                                     "dump", "stream", "files")
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DESCRIPTOR_BINDING"):
+            backup._snapshot_binding(dict(archive, source_proof=dict(proof, extra=True)),
+                                     "dump", "stream", "files")
 
 
 class OffConsentFloorTests(unittest.TestCase):

@@ -169,6 +169,7 @@ BASELINE_TESTS = frozenset(
         "paper_0067::paper_0067_calendar_agreement_conflict_coverage_and_observation",
         "paper_0067::paper_0067_configuration_consent_roles_rls_and_history_down",
         "paper_0067::paper_0071_consent_does_not_enqueue_a_generic_recommendation",
+        "paper_0067::paper_configured_off_nightly_source_fence_and_exported_audit",
         "paper_0067::paper_0067_daily_allocation_manual_auto_exclusions_cash_and_invalid_weights",
         "paper_0067::paper_0067_worker_actor_scope_restores_unset_empty_and_foreign_actor",
         "paper_0067::paper_0067_trade_then_unchanged_no_trade_settlement_valuation_atomic_replay",

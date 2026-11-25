@@ -701,7 +701,6 @@ fn validate_archive_begin_pair(
         || r.scope != "COMBINED_BACKUP"
         || r.account_id.is_none()
         || r.artifact_sha256.is_none()
-        || r.value["predecessor_generation"].is_null()
         || r.request_key != format!("{}:begin", r.generation)
         || action.verb != Verb::Begin
         || action.sequence != 0
@@ -1465,6 +1464,42 @@ pub(super) struct LiveMaintenanceInputs {
     evidence: Value,
 }
 
+fn validate_archive_restore_receipt(
+    intent: &Intent,
+    archive: &Value,
+    evidence: &Value,
+) -> Result<(), ErrorCode> {
+    let configured_off =
+        wire::configured_off_archive(archive).map_err(|_| ErrorCode::WireInvalid)?;
+    if evidence["source_audit_sha256"] != archive["audit_sha256"]
+        || evidence["restored_audit_sha256"] != archive["audit_sha256"]
+        || evidence["source_installation_id"] != archive["installation_id"]
+        || evidence["source_generation"] != archive["generation"]
+        || archive["account_id"] != intent.value["account_id"]
+        || archive["control_epoch"] != intent.expected_epoch
+    {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    if configured_off {
+        let proof = canonical_text(&archive["source_proof"])?;
+        if evidence["schema"] != wire::CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA
+            || evidence["source_epoch"] != archive["control_epoch"]
+            || evidence["source_proof_sha256"] != digest(proof.as_bytes())
+        {
+            return Err(ErrorCode::IdentityConflict);
+        }
+    } else if evidence["schema"] != "owner-beta-paper-restore-receipt-v1"
+        || archive["generation"] != intent.value["predecessor_generation"]
+        || evidence["source_epoch"]
+            .as_i64()
+            .and_then(|n| n.checked_add(1))
+            != Some(intent.expected_epoch)
+    {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(())
+}
+
 impl LiveMaintenanceInputs {
     pub(super) fn open(
         originals: &BoundOriginals,
@@ -1804,20 +1839,10 @@ impl LiveMaintenanceInputs {
                 if prior_stage["stage"] != "RECONCILED"
                     || !last["event_id"].is_null()
                     || last["artifact_sha256"] != root.intent.value["artifact_sha256"]
-                    || evidence["source_audit_sha256"] != archive["audit_sha256"]
-                    || evidence["restored_audit_sha256"] != archive["audit_sha256"]
-                    || evidence["source_installation_id"] != archive["installation_id"]
-                    || evidence["source_generation"] != archive["generation"]
-                    || archive["generation"] != root.intent.value["predecessor_generation"]
-                    || archive["account_id"] != root.intent.value["account_id"]
-                    || archive["control_epoch"] != root.intent.expected_epoch
-                    || evidence["source_epoch"]
-                        .as_i64()
-                        .and_then(|n| n.checked_add(1))
-                        != Some(root.intent.expected_epoch)
                 {
                     return Err(ErrorCode::IdentityConflict);
                 }
+                validate_archive_restore_receipt(&root.intent, &archive, &evidence)?;
                 prior_stage
             } else {
                 last

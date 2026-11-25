@@ -80,17 +80,45 @@ only after the remaining pre-soak conditions have been met.
 ## Daily backup before Paper activation
 
 On 2026-11-25 the Owner approved daily full backups throughout pre-activation
-observation. For a configured account already OFF, the new path must preserve
-the live control epoch and consent. The existing combined backup records a new
-OFF event even for that account and starts a new observation cohort.
+observation. Use the [canonical nightly service install and preflight](production-release-and-backup.md#install-the-nightly-simulation-backup-for-an-inactive-daily-installation)
+with the release's `daily-simulation` backup profile. Preflight checks the fixed
+Daily date and mode on the installed release. A configured account must be
+`OFF`, agree with the retained journal floor, and have no active Paper process
+binding. Preflight emits `NIGHTLY_PAPER CONFIGURED_OFF` for this route. A verified
+empty Paper history uses the existing Daily/simulation route. The explicit
+combined backup remains available when an operator needs a fresh OFF boundary.
 
-Exercise two consecutive backups of the same configured OFF account in the
-isolated verification fixture. Check its live state, epoch and consent each time,
-then verify the encrypted database and file set by restoring them in
-isolation. Apply the restored OFF transition inside that isolated database.
-After verification succeeds, resume only the services running before backup.
-A failure retains its evidence for manual recovery. Track implementation,
-deployment and the three actual trading sessions in R5-04.
+The configured OFF route keeps the original live Paper and Daily control rows
+and their epochs. The nightly sequencer fences the exact API and simulation
+generations and the original Daily cohort. If the current release has a running
+source witness, its next slot must already be `ARMED`, with enough time remaining
+for the complete backup lease and the original 60-second dispatch margin. The
+backup holds the witness's root-owned `.control/archive.lock` over read-only
+file selection. The original daemon, one-use claim, timer and live Current
+heartbeat stay in place. A captured Current and claim are historical archive
+members. The restored guest starts with its own local custody.
+
+The archive contains the unchanged PostgreSQL dump and audit from one exported
+read-only snapshot, its selected file originals, and the exact Paper/Daily
+control commitments. The enclosing six-member encrypted set is unchanged.
+Inside it, `owner-beta-paper-archive-v2` uses
+`paper-combined-configured-off` and a typed `source_proof`. The journaled
+verification requires the archive digest from this nightly attempt. The
+networkless restore guest verifies the original database and files first,
+performs the guest-only `RESTORED_OFF` transition, and proves that its Daily
+control is OFF. If Daily was ON in the original, the guest records that isolated
+control change separately. The serving SQLx migration ledger remains at 0071
+for the Paper consent release.
+
+The nightly sequence resumes the previously running cohort after archive
+verification. A final readback must reproduce the original control, consent and
+witness identity for the date to pass. A refusal preserves the step record for
+manual recovery. Confirm two consecutive successful nights on the same
+configured OFF account with a stable epoch and consent. Include one genuine
+source witness that remains armed through backup and dispatches its original
+claim normally. Check the encrypted set's isolated restore and the services
+that returned. Deployment, those completed nights and the actual trading
+session observation remain R5-04 evidence.
 
 ## Operator and embedded callers
 

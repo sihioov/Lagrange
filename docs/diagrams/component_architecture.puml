@@ -46,7 +46,7 @@
 '   history phase owner -> retained P4 lifecycle; no synthetic Source or readiness override.
 ' evidence: scripts/ops/lib/owner-beta-paper-genuine-history.py:249-277; scripts/ops/lib/owner-beta-paper-lifecycle.py:838-855
 '   archive weight comparison -> existing exact six-place target-number parser; no new decimal dependency.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2737-2753; crates/job-queue/src/owner_beta/target.rs:981-1010
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2879-2895; crates/job-queue/src/owner_beta/target.rs:981-1010
 ' Source-image builders -> exact public archive projection input, builder stages only.
 ' evidence: .dockerignore:3-8; crates/market-data/src/paper_archive_sources/closure.rs:45-48; data-pipelines/collectors/Dockerfile:12; crates/api-server/Dockerfile:12; crates/job-queue/Dockerfile:12; crates/job-queue/Dockerfile.owner-beta-runner:14; crates/job-queue/Dockerfile.owner-equity-v2-runner:18; crates/job-queue/Dockerfile.backtest-runner:19; deploy/runtime/Dockerfile.paper-runner:11
 ' Smoke -> existing no-cache context audit, projection admission and unrelated-docs denial.
@@ -64,29 +64,33 @@
 ' evidence: scripts/ops/lib/owner-beta-paper-backup-references.py:43-49
 '   paper-combined codec -> 20 named file classes.
 ' evidence: scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,65-76,309-321
-'   Daily dispatcher -> owner-beta-paper-backup.py run_locked capture/verify/reconcile.
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:2056-2075,2223-2231; scripts/ops/lib/owner-beta-paper-backup.py:3422,3512-3524
+'   Daily dispatcher chooses the exact OFF profile under the retained release and backup locks.
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:2235-2241,2284-2295,2313-2328; scripts/ops/lib/owner-beta-paper-backup.py:3361-3405,3809-3848
 '   Paper capture -> retained BEGIN, drain/OFF, held snapshot, six-field dataset rows and descriptor framing.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3512-3524,2526-2557,2564-2591
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3899-3911,2670-2701,2709-2736
 '   selection -> existing Daily backup roots/codec and verified Paper release; no caller-provided roots.
-' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:55-78,757-771,784-789
+' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:55-78,785-799,812-817
 '   sealed inputs -> existing cipher, exact 20-class restore codec and owned networkless clone.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:688-726,973-981; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:2045-2053
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:734-772,1029-1037; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:2098-2106
 '   protected RESTORE BEGIN -> process guard -> archive intake -> full Domains/material consumer -> guarded BEGIN continuation.
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4137-4150; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:368-378,559-598,610-615,727-747,756-793; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647
-'   Restore verifies the archived audit SQL against the retained capability, release manifest and audit descriptor.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:821-840,1906-1912; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:642-661,767-770
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2195-2222,4211-4224; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:368-378,574-613,637-663,742-771,779-816; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2999-3016,3019-3048,3231-3250,3362-3415; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647
+'   Configured OFF nightly borrows the live source ARMED prefix, not its Current authority; its clone uses separate destination custody.
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3165-3248,3386-3457; scripts/ops/lib/owner-beta-paper-operations.py:4253-4355,4444-4528; scripts/ops/lib/owner-beta-paper-evidence.py:1268-1324; scripts/ops/lib/owner-beta-paper-backup-selection.py:626-639,1018-1060; crates/job-queue/src/owner_beta/paper/operations/protected/archive_lifecycle.rs:19-139
+'   The capture holds the exact Paper/Daily control rows and opens a separate exported read-only MVCC snapshot.
+' evidence: deploy/db/owner-beta-paper-off-source-fence.sql:1-26; scripts/ops/lib/owner-beta-paper-backup.py:2707-2735,3198-3226
+'   Restore verifies the archived audit SQL and, for configured OFF, verifies the guest-only transition helper.
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:850-897,1973-2012; scripts/ops/lib/owner-beta-paper-operations.py:1511-1538; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:639-668,751-771; deploy/db/owner-beta-paper-configured-off-restore.sql:4-23,121-131
 '   archive source owner -> original-backed Raw, Daily/historical material and final rehash/completion callback.
 ' evidence: crates/market-data/src/paper_archive_sources/closure.rs:4998-5020,5409-5415,5451-5484,5567-5581; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
 '   private candidate verifier/cleanup -> source SNAPSHOT -> COMPLETE/latest publication.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2761-2773,3534-3539,530-555; scripts/ops/lib/owner-beta-paper-operations.py:4130-4158; scripts/ops/lib/owner-beta-daily-backup.py:788-828
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2914-2926,3921-3926,575-600; scripts/ops/lib/owner-beta-paper-operations.py:4146-4174; scripts/ops/lib/owner-beta-daily-backup.py:788-828
 '   standalone persisted verify -> clone-local persisted-set check without source BEGIN/drain.
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3461-3467
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3848-3854
 ' Folded R5 maintenance dependencies (actual imports / calls; integrated source candidate):
 '   Python Paper controller -> existing Daily context / Docker transport, not a second service.
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:51-52,537-546,717-723
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:55-56,541-550,721-727
 '   native bridge -> private wire / bound / chain; checked source family stays in market-data.
-' evidence: crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-160; crates/job-queue/src/owner_beta/paper/operations/protected.rs:21-34,2150-2182; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
+' evidence: crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-160; crates/job-queue/src/owner_beta/paper/operations/protected.rs:21-34,2217-2249; crates/job-queue/src/owner_beta/paper/source_evidence.rs:3
 '   descriptive audit decoder -> checked-in archive projection (no runtime DB connection).
 ' evidence: scripts/ops/lib/owner-beta-paper-audit.py:1-5,15; scripts/ops/lib/owner-beta-paper-backup-references.py:2335-2337
 ' 2026-11-03: protected Current/Source family moves once into market-data; genuine Current owns the native invocation context; no runtime service/activation change.
@@ -99,7 +103,7 @@
 ' 2026-10-29 R5 source candidate: protected future-slot witness and role-separated
 ' paper-evidence helper/0066 relations. Runtime Origin remains OPEN; PNGs render locally.
 ' Disposable-only harness/fixture edges are folded; never production origin:
-' evidence: scripts/ops/owner-beta-paper-evidence-local-integration.py:871-876; scripts/ops/test_owner_beta_paper_evidence.py:19-20,82; tests/integration/migration-contract/tests/migration_contract.rs:14970-14976
+' evidence: scripts/ops/owner-beta-paper-evidence-local-integration.py:871-876; scripts/ops/test_owner_beta_paper_evidence.py:20-21,83; tests/integration/migration-contract/tests/migration_contract.rs:14970-14976
 ' Generated 2026-09-04 from manifest + code-usage evidence.
 ' WP6-C2a source delta 2026-09-09: integrated intraday topology only;
 ' runtime remains default-off and unactivated. Existing EOD/chart/Raw/
@@ -394,7 +398,7 @@ simulation_operations --> simulation_release : checked config, receipt and reade
 simulation_operations --> simulation_runtime : observe and drain owned generation
 ' evidence: scripts/ops/lib/owner-beta-simulation-operations.py:37
 simulation_operations --> daily_ops : protected release lock / DB transport
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:46,1862-1876,2084-2088
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:46,1915-1929,2138-2142
 daily_backup --> simulation_operations : simulation-only or combined capture;\nAPI/worker fence and independent DB audit
 ' evidence: crates/job-queue/src/owner_beta/simulation_execution/process_startup.rs:320; crates/job-queue/src/queue.rs:272; crates/job-queue/src/queue.rs:433
 simulation_execution --> job_queue : narrow startup checks; Owner-filtered queue\nand exact-attempt heartbeat APIs
@@ -428,24 +432,24 @@ factor_engine --> market_data
 daily_wrapper --> daily_ops : protected prepare / enable / disable
 ' evidence: scripts/ops/compose-release.sh:353-358
 daily_wrapper --> daily_backup : backup / verify / reconcile
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1634-1652,1657-1686
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:44,1687-1705,1710-1739
 daily_backup --> daily_ops : exact cohort disable/drain and resume policy
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45,1626-1631,1662-1669,659-664
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:45,1679-1684,1715-1722,659-664
 daily_backup --> daily_files : source and restored byte/reference audit
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:294-311,413-460; deploy/db/owner-beta-daily-reservation-restore.sql:1-24
 daily_ops --> daily_sql : fixed migration-owner maintenance transport
 ' evidence: scripts/ops/lib/owner-beta-daily-backup.py:452-470; deploy/db/daily-backup-verify.sh:42-44
 daily_backup --> daily_sql : same audit inside isolated restored database
 
-' evidence: scripts/ops/install-nightly-simulation-backup.py:323-326,332-337; deploy/systemd/lagrange-production-backup.nightly-simulation.conf.in:10,19; scripts/ops/install-nightly-simulation-backup.py:40,255-264,275-283; scripts/ops/nightly-simulation-backup.py:341-352
+' evidence: scripts/ops/install-nightly-simulation-backup.py:323-326,332-337; deploy/systemd/lagrange-production-backup.nightly-simulation.conf.in:10,19; scripts/ops/install-nightly-simulation-backup.py:40,255-264,275-283; scripts/ops/nightly-simulation-backup.py:344-355
 nightly_installer --> nightly_scheduler : pin canonical entrypoint; validate scheduler history under lock before retirement
-' evidence: scripts/ops/nightly-simulation-backup.py:410-426,438
+' evidence: scripts/ops/nightly-simulation-backup.py:420-434,439-471
 nightly_scheduler --> nightly_sequencer : exact pinned child preflight and bounded apply
-' evidence: scripts/ops/preupgrade-simulation-backup.py:762-794; scripts/ops/lib/owner-beta-daily-backup.py:2070-2075
-nightly_sequencer --> daily_backup : pinned simulation capture and isolated verify;\nrequire empty Paper history
-' evidence: scripts/ops/preupgrade-simulation-backup.py:835-851,863-883; scripts/ops/compose-release.sh:1049-1060,1087-1096
+' evidence: scripts/ops/preupgrade-simulation-backup.py:783-839,1131-1151,1313-1326; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2313-2328
+nightly_sequencer --> daily_backup : approved empty or configured OFF scope;\nverify exact archive before returning cohort
+' evidence: scripts/ops/preupgrade-simulation-backup.py:874-890,902-922; scripts/ops/compose-release.sh:1049-1060,1087-1096
 nightly_sequencer --> daily_wrapper : same-release API-only resume;\nstart simulation only if captured
-' evidence: scripts/ops/preupgrade-simulation-backup.py:885-915,1153-1157,1232-1233
+' evidence: scripts/ops/preupgrade-simulation-backup.py:924-954,1198-1202,1277-1278
 nightly_sequencer --> simulation_operations : operator recovery verifies an interrupted worker start
 
 
@@ -578,13 +582,13 @@ package "R5 Paper source — deployment Origin OPEN" #E6F2DF {
 }
 ' evidence: scripts/ops/install-kis-daily.sh:515
 paper_installer --> paper_witness : render inactive official service
-' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1179; scripts/ops/lib/owner-beta-paper-evidence.py:1185
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1293; scripts/ops/lib/owner-beta-paper-evidence.py:1299
 paper_witness --> paper_source_wrapper : fixed argv; inherited private FD
 ' evidence: scripts/ops/lib/backfill-progress.py:263; scripts/ops/kis-daily-production.sh:545
 paper_source_wrapper --> paper_witness : typed Raw / phase relay
-' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1079
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1181
 paper_witness --> paper_helper_runtime : same captured role projection / argv + inspector
-' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:639; scripts/ops/lib/owner-beta-paper-evidence.py:749
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:730; scripts/ops/lib/owner-beta-paper-evidence.py:840
 paper_witness --> paper_helper_context : rederive private artifacts path; compare full projection
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:115; scripts/ops/lib/owner-beta-daily-operations.py:121
 paper_helper_context --> paper_helper_context_shell : pin first env bytes; fixed bounded child argv
@@ -620,7 +624,7 @@ paper_checker --> paper_historical_reader : retained approved lease
 paper_checker --> paper_calendar_reader : shared calendar policy
 ' evidence: crates/market-data/src/daily_price_only/calendar.rs:777; crates/market-data/src/daily_price_only/calendar.rs:836
 paper_calendar_reader --> paper_raw_reader : guard every original holder
-' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:657; scripts/ops/lib/owner-beta-paper-evidence.py:722
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:748; scripts/ops/lib/owner-beta-paper-evidence.py:813
 paper_witness --> paper_current : atomic rename; hold whole-file OFD WRLCK
 ' evidence: crates/market-data/src/paper_source_evidence.rs:1906; crates/market-data/src/paper_source_evidence.rs:1913; crates/market-data/src/paper_source_evidence.rs:884
 paper_current --> paper_current_reader
@@ -726,7 +730,7 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
   folder "Lifecycle query / selection / anchor originals\n.owner-beta-paper-lifecycle; root-private\nstaging excluded from durable history" as paper_lifecycle_originals
   artifact "Temporary native historical view\nroot-owned 0700 / 0600; fixed RO alias\noriginal worker material retained" as paper_native_base_view
 }
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:4768-4785
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:5062-5079
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:164-174,177-201
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
@@ -736,11 +740,11 @@ paper_ops_release --> paper_history_inventory : reader_guard consumes the in-pro
 paper_history_inventory --> daily_ops : source manifest / project / context binding;\nmigration-owner DB transport (Database.execute)
 ' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:167-182,691-713
 paper_history_inventory --> paper_ops_python : P4 probe_history / _READER_CONSUMER (state B)
-' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:977-989,1171-1174
+' evidence: scripts/ops/lib/owner-beta-paper-evidence.py:1068-1080,1285-1288
 paper_witness --> paper_host_lifecycle : Current barrier before future claim / ARM_INTENT
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:943-953
 paper_ops_release --> paper_host_lifecycle : prepare private host storage before immutable publication
-' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:495-535; scripts/ops/lib/owner-beta-paper-operations.py:823-833
+' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:495-535; scripts/ops/lib/owner-beta-paper-operations.py:827-837
 paper_host_lifecycle --> paper_ops_python : actual registered owner invokes native and exact readback
 ' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:495-517
 paper_host_lifecycle --> paper_ops_journal : hold original journal and release-lock custody
@@ -748,35 +752,35 @@ paper_host_lifecycle --> paper_ops_journal : hold original journal and release-l
 paper_host_lifecycle --> paper_lifecycle_originals : retain actual query / result originals and native anchors
 ' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:276-287; scripts/ops/lib/owner-beta-daily-base.py:141-173
 paper_host_lifecycle --> paper_native_base_view : derive from retained actual worker material
-' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:282-287,381; scripts/ops/lib/owner-beta-paper-operations.py:502-503,1566-1573
+' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:282-287,381; scripts/ops/lib/owner-beta-paper-operations.py:506-507,1572-1579
 paper_native_base_view --> paper_ops_cli : fixed historical alias; group10001 for Raw / admitted; no added capability
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1103-1132,3844-3874,3926-3942; scripts/ops/lib/owner-beta-paper-journal.py:1433-1463
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1107-1136,3860-3890,3942-3958; scripts/ops/lib/owner-beta-paper-journal.py:1433-1463
 paper_ops_python --> paper_ops_journal : retain FENCED / RECONCILED / OFF_COMMITTED stages and floor
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1103-1134,3888-3913; scripts/ops/lib/owner-beta-paper-journal.py:907-918,1433-1463
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1107-1138,3904-3929; scripts/ops/lib/owner-beta-paper-journal.py:907-918,1433-1463
 paper_ops_python --> paper_ops_release : verify exact installed source identity; revalidate
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:710-718,753-771; scripts/ops/lib/owner-beta-paper-release.py:648-683,685-709,914-942
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:714-722,757-775; scripts/ops/lib/owner-beta-paper-release.py:648-683,685-709,914-942
 paper_ops_python --> paper_ops_action_custody : same action owner through staging / import
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1352-1362,1840-1855; scripts/ops/lib/owner-beta-paper-journal.py:1465-1534,2271-2312
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1356-1366,1846-1861; scripts/ops/lib/owner-beta-paper-journal.py:1465-1534,2271-2312
 paper_ops_journal --> paper_ops_action_custody : construct retained private custody; not a copied permit
 ' evidence: scripts/ops/lib/owner-beta-paper-journal.py:1465-1534,1545-1571,2240-2267
 paper_ops_action_custody --> paper_ops_originals : preserve exact original bytes; stage R/A/E
 ' evidence: scripts/ops/lib/owner-beta-paper-journal.py:2240-2267,2271-2312
 paper_ops_python -[#2255CC,bold]-> paper_ops_cli : ephemeral pinned paper image / fixed native argv\nBEGIN / readback / RECONCILE / OFF; no new serving service
-' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1551-1584,1679-1691; crates/api-server/Cargo.toml:44; crates/api-server/src/bin/owner-beta-paper-ops-native.rs:3,16-26
+' evidence: scripts/ops/lib/owner-beta-paper-operations.py:1557-1590,1685-1697; crates/api-server/Cargo.toml:44; crates/api-server/src/bin/owner-beta-paper-ops-native.rs:3,16-26
 paper_ops_cli --> paper_ops_native : Verb::parse / run_native; closed result + exit status
 ' evidence: crates/api-server/src/bin/owner-beta-paper-ops-native.rs:3,16-26; crates/job-queue/src/owner_beta/paper/operations.rs:157-166
 job_queue --> paper_ops_native : module export; private protocol implementation
-' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:7; crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-166; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2150-2182; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1279-1307,1449-1522
+' evidence: crates/job-queue/src/owner_beta/paper/mod.rs:7; crates/job-queue/src/owner_beta/paper/operations.rs:17-20,157-166; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2217-2249; crates/job-queue/src/owner_beta/paper/operations/protected/chain.rs:18-30,1278-1306,1448-1557
 paper_ops_native --> paper_ops_archive_sandbox : install additive process guard before protected context loading
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32-34,2117-2136; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,149-177,180-209,385-389
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:32-34,2184-2203; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,149-177,180-209,385-389
 paper_ops_native --> paper_ops_originals : fixed-path retained operation / action / stage reads
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:1936-1952,2072-2108; crates/job-queue/src/owner_beta/paper/operations/protected/bound.rs:418-471,486-521
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2003-2019,2139-2175; crates/job-queue/src/owner_beta/paper/operations/protected/bound.rs:418-471,486-521
 paper_ops_native --> paper_current_reader : same market-data protected Current policy\nno parallel Origin validator
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2367-2376,3856-3871; crates/market-data/src/paper_source_evidence.rs:2071-2103
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2441-2450,3930-3945; crates/market-data/src/paper_source_evidence.rs:2071-2103
 paper_ops_native ..> paper_checker : retained ENABLE/RECOVER financial checker source\npublic readiness still closed
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:62,3312-3322,3497-3514,3856-3861; crates/job-queue/src/owner_beta/paper/evidence.rs:294-325,378-405
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:69,3386-3396,3571-3588,3930-3935; crates/job-queue/src/owner_beta/paper/evidence.rs:294-325,378-405
 paper_ops_native --> paper_ledger_storage : migration_owner narrow lifecycle SQL + exact readback\nRECONCILE/OFF source only, not execution proof
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:4153-4218,4319-4340,4474-4523; migrations/0068_owner_beta_paper_operations_v1.up.sql:7-45,619-700,775-838,1074-1115
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:4227-4292,4393-4414,4548-4597; migrations/0068_owner_beta_paper_operations_v1.up.sql:7-45,619-700,775-838,1074-1115
 note bottom of paper_ops_native
   Existing api-server package hosts this one-shot executable.
   Same paper-scheduler image contains it; no new Compose service.
@@ -788,7 +792,7 @@ note bottom of paper_ops_native
 end note
 
 package "P5 archive capture, source closure and publication — connected source graph\nGenuine fixture / complete hosted / runtime acceptance OPEN" #F1EBF7 {
-  component "Daily dispatcher + owner-beta-paper-backup.py\nrun_locked: backup / verify / reconcile\nheld source snapshot and capture owner" as paper_archive_capture
+  component "Daily dispatcher + owner-beta-paper-backup.py\nordinary backup / verify / reconcile\nconfigured OFF nightly source capture" as paper_archive_capture
   artifact "Sealed archive inputs\npostgres.dump / files.bundle / audit.stream\ndataset-rows + audit/archive descriptors" as paper_archive_inputs
   node "Owned Paper archive clone\n20-class materialization\nnetwork none / private PG socket" as paper_archive_clone
   folder "Fresh destination custody\nnew installation + R/A/E/Q journal\nepoch floor / action originals" as paper_archive_destination
@@ -800,40 +804,42 @@ package "P5 archive capture, source closure and publication — connected source
   component "Standalone persisted-set verifier\nclone-local; source-read-only" as paper_archive_verify
   component "owner-beta-paper-audit.py\nstrict descriptive stream decoder\nno DB connection" as paper_archive_decoder
 }
-' evidence: scripts/ops/lib/owner-beta-daily-backup.py:2065-2075,2091-2094,2102,2108,2214,2222-2225; scripts/ops/lib/owner-beta-paper-backup.py:3422
-daily_backup --> paper_archive_capture : retained release lock; manual backup accepts an explicit\nSTOPPED generation and caller key
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3163-3172,3175-3200; scripts/ops/lib/owner-beta-daily-operations.py:313-337
+' evidence: scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2313-2328; scripts/ops/lib/owner-beta-paper-backup.py:3403-3457,3809-3848
+daily_backup --> paper_archive_capture : exact OFF scope under release lock
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3550-3559,3562-3587; scripts/ops/lib/owner-beta-daily-operations.py:313-337
 paper_archive_capture --> daily_ops : select predecessor by read-only SQL in the pinned db-migrate image
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3211-3233,3356,3490-3518; scripts/ops/lib/owner-beta-paper-operations.py:1072-1105,3376-3411,3421
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3598-3620,3743,3877-3905; scripts/ops/lib/owner-beta-paper-operations.py:1076-1109,3392-3427,3437
 paper_archive_capture --> paper_ops_cli : re-read predecessor BEGIN; linked BEGIN and fresh exact COMMITTED readback
 
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2526-2557,2564-2591; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2670-2701,2709-2736; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321
 paper_archive_capture --> paper_archive_inputs : held snapshot + six-field rows + 20-class bundle / descriptors
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2526-2557,2564-2591,688-699; scripts/ops/lib/owner-beta-paper-backup-references.py:1700-1763; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:2045-2053
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2670-2701,2709-2736,734-745; scripts/ops/lib/owner-beta-paper-backup-references.py:1700-1763; scripts/ops/lib/owner-beta-daily-backup-files.py:33-39,309-321; scripts/ops/lib/owner-beta-daily-backup.py:2098-2106
 paper_archive_inputs --> paper_archive_clone : existing cipher/decrypt; private package materialized and guest created
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:688-726,778-815,901-981
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:734-772,824-870,956-1037
 paper_archive_clone --> paper_archive_destination : clone socket plus fresh destination journal and RESTORE custody
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:968-981,1638-1715; scripts/ops/lib/owner-beta-paper-operations.py:851-873
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1024-1037,1694-1771; scripts/ops/lib/owner-beta-paper-operations.py:855-877
 paper_archive_destination --> paper_ops_native : destination invokes guarded native RESTORE BEGIN / RESTORE_OFF
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1717-1821; scripts/ops/lib/owner-beta-paper-operations.py:851-873,1459-1526,1551-1604; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2128-2155,4137-4150; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:1773-1886; scripts/ops/lib/owner-beta-paper-operations.py:855-877,1463-1530,1557-1610; crates/job-queue/src/owner_beta/paper/operations/protected.rs:2195-2222,4211-4224; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:102-104,180-209,385-389
 paper_ops_native --> paper_archive_domains : native intake closes original-backed source domains before BEGIN continuation
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2136-2155,4137-4150; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:368-378,559-598,610-615,727-747,756-793; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2857-2874,2877-2906,3089-3108,3220-3273; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2203-2222,4211-4224; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:368-378,574-613,637-663,742-771,779-816; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2999-3016,3019-3048,3231-3250,3362-3415; crates/market-data/src/paper_archive_sources/closure.rs:5482-5647; crates/market-data/src/paper_archive_sources.rs:2165-2176,2321-2332
 paper_ops_archive_sandbox --> paper_archive_domains : borrowed guard is revalidated through archive intake and continuation
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2136-2155; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:84-103; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:559-598,610,756-793
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected.rs:2203-2222; crates/job-queue/src/owner_beta/paper/operations/protected/archive_sandbox.rs:84-103; crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:574-613,625,779-816
 paper_archive_domains --> paper_archive_candidate : native source closure returns into private candidate creation and verification
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:727-772; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:3260-3273; scripts/ops/lib/owner-beta-paper-backup.py:2641-2655,2761-2773,530-538
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive.rs:742-795; crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:3402-3415; scripts/ops/lib/owner-beta-paper-backup.py:2794-2808,2914-2926,575-583
 paper_archive_candidate --> paper_archive_snapshot : only verified candidate reaches source SNAPSHOT seal
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3534-3539; scripts/ops/lib/owner-beta-paper-backup.py:539-555; scripts/ops/lib/owner-beta-daily-backup.py:783-823
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3921-3926; scripts/ops/lib/owner-beta-paper-backup.py:584-600; scripts/ops/lib/owner-beta-daily-backup.py:783-823
 paper_archive_snapshot --> paper_archive_latest : close source owners before COMPLETE/latest atomic publication
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3461-3467
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3440-3457,579-600
+paper_archive_candidate --> paper_archive_latest : configured OFF publication
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3848-3854
 paper_archive_inputs --> paper_archive_verify : persisted-only verify without source BEGIN or drain
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3461-3467
-' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2469-2471,2504-2509; scripts/ops/lib/owner-beta-paper-audit.py:194-205
-paper_archive_capture --> paper_archive_decoder : strict descriptive audit decoding remains a separate source input
-' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:488-559,992-993; crates/market-data/src/paper_archive_sources/closure.rs:2612-2688
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:3848-3854
+' evidence: scripts/ops/lib/owner-beta-paper-backup.py:2719-2741,3218-3226; scripts/ops/lib/owner-beta-paper-audit.py:194-206,282-322
+paper_archive_capture --> paper_archive_decoder : consumed audit stream and v2 control proof
+' evidence: scripts/ops/lib/owner-beta-paper-backup-selection.py:503-573,1057-1078; crates/market-data/src/paper_archive_sources/closure.rs:2612-2688
 paper_lifecycle_originals --> paper_archive_inputs : retain immutable sibling history in existing paper_evidence class; omit staging
-' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:13-14,3260-3263; crates/job-queue/src/owner_beta/paper/operations/protected/archive_lifecycle.rs:69-98,288-320,751-780
-paper_archive_domains --> paper_archive_lifecycle : mandatory original-backed lifecycle consumption before BEGIN
+' evidence: crates/job-queue/src/owner_beta/paper/operations/protected/archive_domains.rs:2077-2133,3402-3405; crates/job-queue/src/owner_beta/paper/operations/protected/archive_lifecycle.rs:19-139,219-248
+paper_archive_domains --> paper_archive_lifecycle : lifecycle originals and v2 ARMED evidence
 note bottom of paper_archive_capture
   A+B source graph is connected through the in-process archive guard, archive intake, full Domains/material checks,
   destination custody, fresh candidate verification, cleanup, source SNAPSHOT and publication.

@@ -1184,6 +1184,12 @@ class NightlyTests(Base):
         self.observed_worker = None
         self.bad_targets = False
         self.old_maintenance_plan = False
+        self.configured_paper = False
+        self.paper_proof = "sha256:" + "d" * 64
+        self.paper_archive = None
+        self.paper_archive_count = 0
+        self.changed_paper_verify = False
+        self.changed_paper_readback = False
         for digit, (service, identity) in enumerate(self.services.items(), 4):
             image = "sha256:" + format(digit, "x") * 64
             value = beta_container(identity, image)
@@ -1251,6 +1257,22 @@ class NightlyTests(Base):
             if "nightly-combined-backup" in argv:
                 return 0, b"NIGHTLY_COMBINED_PLAN: fixture\n", b""
             return 0, (tool.PLAN_LINE + "fixture" + tool.NIGHTLY_PLAN_SUFFIX + "\n").encode(), b""
+        if self.configured_paper and "--operation" in argv:
+            operation, mode = argv[argv.index("--operation") + 1], argv[argv.index("--mode") + 1]
+            if operation == "nightly-combined-backup" and mode == "preflight":
+                self.children(argv, env, timeout)
+                return 0, (tool.PREFLIGHT_LINE + "\n" + tool.PAPER_PREFLIGHT_LINE + "\n").encode(), b""
+            if operation == "nightly-combined-paper-readback":
+                self.assertEqual(mode, "readback")
+                self.assertIn("--expected-nightly-paper-off", argv)
+                self.assertEqual(argv[argv.index("--expected-nightly-paper-origin") + 1], self.paper_proof)
+                self.assertEqual(argv[argv.index("--expected-nightly-daily-control") + 1],
+                                 f"{'ENABLED' if self.daily_enabled else 'DISABLED'}:{self.daily_epoch}")
+                self.assertTrue(self.docker.containers[self.services[tool.API]]["State"]["Running"])
+                self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+                self.events.append(("pinned", operation, mode))
+                return (1, b"", b"") if self.changed_paper_readback else (
+                    0, (tool.PAPER_READBACK_LINE + "\n").encode(), b"")
         if "--operation" in argv and argv[argv.index("--mode") + 1] == "apply":
             operation = argv[argv.index("--operation") + 1]
             if operation.startswith("nightly-combined-"):
@@ -1280,6 +1302,12 @@ class NightlyTests(Base):
                 result = self.children(argv, env, timeout)
                 self.write_pending(tool.HANDOFF_PENDING, "switched", **self.backup_fields)
                 if operation == "nightly-combined-backup":
+                    if self.configured_paper:
+                        self.assertIn("--expected-nightly-paper-off", argv)
+                        self.paper_archive_count += 1
+                        self.paper_archive = "sha256:" + f"{self.paper_archive_count:064x}"
+                        return 0, ("\n".join((tool.PAPER_BACKUP_LINE, tool.PAPER_ARCHIVE_PREFIX + self.paper_archive,
+                                            tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
                     return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_SOURCE_UNCHANGED\n", b""
                 return result
             if operation in ("inactive-simulation-verify", "nightly-combined-verify"):
@@ -1291,6 +1319,13 @@ class NightlyTests(Base):
                 if self.fail_verify:
                     return 1, b"", b""
                 if operation == "nightly-combined-verify":
+                    if self.configured_paper:
+                        self.assertIn("--expected-nightly-paper-off", argv)
+                        digest = argv[argv.index("--expected-nightly-paper-archive") + 1]
+                        self.assertEqual(digest, self.paper_archive)
+                        result = "sha256:"+"3"*64 if self.changed_paper_verify else digest
+                        return 0, ("\n".join((tool.PAPER_VERIFY_LINE, tool.PAPER_ARCHIVE_PREFIX + result,
+                                            tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
                     return 0, b"DAILY_BACKUP: NIGHTLY_COMBINED_VERIFIED_ISOLATED_DISABLED\n", b""
                 return result
         return self.children(argv, env, timeout)
@@ -1461,6 +1496,53 @@ class NightlyTests(Base):
         self.assertNotIn(("wrapper", "--simulation-resume-daily-api"), self.events)
         self.assertTrue(all(not self.docker.service_ids(PROJECT, service) for service in tool.DAILY_SERVICES))
         self.assertEqual(self.steps()[tool.DAILY_RESUME_STEP], "done")
+
+    def test_two_configured_off_nights_require_distinct_archives_and_same_control_proof(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=True)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF")
+        archives = []
+        for night in range(2):
+            if night:
+                state = Path(argv[argv.index("--state-dir") + 1]).with_name("next-configured-night")
+                state.mkdir(mode=0o700)
+                argv[argv.index("--state-dir") + 1] = self.state = str(state)
+                self.events.clear()
+            result = self.run_tool(argv)
+            self.assertEqual(result[0], 0, result)
+            record = self.progress()
+            self.assertTrue(record["nightly"]["paper_configured_off"])
+            self.assertTrue(record["nightly_paper_origin_unchanged"])
+            self.assertEqual(record["nightly_paper_origin"], self.paper_proof)
+            archives.append(record["nightly_paper_archive"])
+            verify = self.events.index(("pinned", "nightly-combined-verify", "apply"))
+            resume = self.events.index(("wrapper", "--simulation-resume-daily-api"))
+            readback = self.events.index(("pinned", "nightly-combined-paper-readback", "readback"))
+            self.assertLess(verify, resume)
+            self.assertLess(resume, readback)
+            self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
+            self.daily_database.control.assert_not_called()
+        self.assertNotEqual(*archives)
+
+    def test_configured_off_nightly_with_unverified_digest_never_resumes_api(self):
+        self.configured_paper = self.changed_paper_verify = True
+        self.combined_fixture(enabled=False)
+        result = self.run_tool(self.combined_argv("--apply", "--nightly"))
+        self.assertEqual(result[0], 1)
+        self.assertIn("PREUPGRADE_VERIFY_STEP", result[2])
+        self.assertEqual(self.steps()["verify"], "failed")
+        self.assertNotIn(("wrapper", tool.NIGHTLY_API_ONLY), self.events)
+        self.assertFalse(self.daily_enabled)
+
+    def test_configured_off_nightly_rejects_profile_drift_before_signalling(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=False)
+        argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "LEGACY_EMPTY")
+        result = self.run_tool(argv)
+        self.assertEqual(result[0], 1)
+        self.assertIn(tool.NIGHTLY_ERROR, result[2])
+        self.assertEqual(self.progress()["steps"], {})
+        self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
 
     def test_combined_nightly_preserves_the_original_daily_api_when_control_was_off(self):
         self.combined_fixture(enabled=True)

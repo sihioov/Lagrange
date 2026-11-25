@@ -43,6 +43,7 @@ class PaperHandledResult:
     status: str
     generation: str | None = None
     archive_sha256: str | None = None
+    origin_sha256: str | None = None
 
 
 def _require(value, code):
@@ -348,6 +349,50 @@ class _ArchiveOriginal:
 _PAPER_MEMBERS = tuple(name + ".enc" for name in (
     "postgres.dump", "files.bundle", "audit.stream", "dataset-rows.jsonl", "audit.json", "archive.json"))
 _PAPER_FORMAT = "LAGRANGE_PAPER_COMBINED_BACKUP_V1"
+_ARCHIVE_V1 = "owner-beta-paper-archive-v1"
+_ARCHIVE_V2 = "owner-beta-paper-archive-v2"
+_CONFIGURED_OFF_PROFILE = "paper-combined-configured-off"
+_CONFIGURED_OFF_PROOF = "owner-beta-paper-configured-off-source-v1"
+_CONFIGURED_OFF_RESTORE_SQL = "/deploy/db/owner-beta-paper-configured-off-restore.sql"
+_CONFIGURED_OFF_RESTORE_SHA256 = "sha256:1e98caf6209f621a767c4c551f6903b1a1d9bdd251790b6a3b4bb19cbf362b38"
+_ARCHIVE_IDENTITY = ("installation_id", "generation", "account_id", "control_epoch")
+_SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _configured_off_archive(archive):
+    if archive.get("schema") == _ARCHIVE_V1:
+        _require(archive.get("profile") == "paper-combined"
+                 and "source_proof" not in archive, "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        return False
+    proof = archive.get("source_proof")
+    _require(archive.get("schema") == _ARCHIVE_V2
+             and archive.get("profile") == _CONFIGURED_OFF_PROFILE
+             and "drain_receipt_sha256" not in archive
+             and type(archive.get("control_epoch")) is int and archive["control_epoch"] >= 0
+             and type(proof) is dict and set(proof) == {
+                 "schema", "paper_control_sha256", "daily_control_sha256"}
+             and proof["schema"] == _CONFIGURED_OFF_PROOF
+             and all(type(proof[key]) is str and _SHA256.fullmatch(proof[key])
+                     for key in ("paper_control_sha256", "daily_control_sha256")),
+             "PAPER_BACKUP_DESCRIPTOR_BINDING")
+    return True
+
+
+def _snapshot_binding(archive, database_dump_sha256, audit_stream_sha256, files_sha256):
+    configured_off = _configured_off_archive(archive)
+    binding = dict({key: archive[key] for key in _ARCHIVE_IDENTITY},
+        domain="lagrange-paper-snapshot-binding-v2" if configured_off
+               else "lagrange-paper-snapshot-binding-v1",
+        database_dump_sha256=database_dump_sha256, audit_stream_sha256=audit_stream_sha256,
+        files_sha256=files_sha256)
+    if configured_off:
+        binding["source_proof"] = archive["source_proof"]
+    return binding
+
+
+def _restore_source_epoch(archive):
+    return archive["control_epoch"] - int(not _configured_off_archive(archive))
+
 _AUDIT_SQL_SCHEMA_0069 = "sha256:21fac415ca791551ce8bda9ba0cb4e01d121d7a503538c54a2b0ab4bcb3321cc"
 _AUDIT_SQL_SCHEMA_0070 = "sha256:6bde877144248933adf86f8ca251b1f49d81e8b78bc55365a2da13ace967d36f"
 _PAPER_SET = re.compile(r"backup-paper-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}")
@@ -661,10 +706,11 @@ def _create_raw_coordination_locks(directory_fd, providers):
 class _ArchivePackage:
     """Live captured/decrypted originals; never serializable archive authority."""
     def __init__(self, owner, limits, values, persisted=None):
-        _require(type(owner) in {_HeldPaperSnapshot,_PersistedArchiveOwner} and _OWNERS.get(owner._custody) is owner
+        source_types = {_HeldPaperSnapshot, _HeldConfiguredOffSnapshot}
+        _require(type(owner) in source_types | {_PersistedArchiveOwner} and _OWNERS.get(owner._custody) is owner
                  and owner._entered and not owner._closed, "PAPER_BACKUP_PRIVATE")
         owner.revalidate()
-        _require((persisted is None and type(owner) is _HeldPaperSnapshot) or
+        _require((persisted is None and type(owner) in source_types) or
             (type(persisted) is _StoredPaperSet and persisted.storage.owner is owner and
              (persisted.completed or (type(persisted.publication) is _PaperPublication
               and persisted.publication in _PUBLICATIONS and persisted.publication.retained is persisted
@@ -806,10 +852,19 @@ class _ArchivePackage:
         archive_original,audit_original=by_name["archive.json"],by_name["audit.json"]
         archive=self.ops.journal._json(os.pread(archive_original.fd,archive_original.size+1,0),65_536)
         audit=self.ops.journal._json(os.pread(audit_original.fd,audit_original.size+1,0),65_536)
-        binding=dict(domain="lagrange-paper-snapshot-binding-v1",
-            **{key:archive[key] for key in ("installation_id","generation","account_id","control_epoch")},
-            database_dump_sha256=by_name["clone.dump"].sha256,
-            audit_stream_sha256=by_name["audit.stream"].sha256,files_sha256=by_name["files.bundle"].sha256)
+        expected_archive = getattr(self.owner, "expected_archive", None)
+        _require(expected_archive is None or archive_original.sha256 == expected_archive,
+                 "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        expected_live = getattr(self.owner, "expected_live", None)
+        _require(expected_live is None or tuple(archive[key] for key in
+                 ("account_id", "control_epoch", "source_proof")) == expected_live,
+                 "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        configured_off = _configured_off_archive(archive)
+        expected_profile = self.owner.expected_configured_off
+        _require(expected_profile is None or configured_off == expected_profile,
+                 "PAPER_BACKUP_DESCRIPTOR_BINDING")
+        binding = _snapshot_binding(archive, by_name["clone.dump"].sha256,
+                                    by_name["audit.stream"].sha256, by_name["files.bundle"].sha256)
         _require(archive["database_dump_sha256"]==binding["database_dump_sha256"]
             and archive["files_sha256"]==binding["files_sha256"]
             and archive["database_snapshot_sha256"]==self.ops._digest(self.ops._canonical(binding))
@@ -878,7 +933,7 @@ class _ArchivePackage:
         self.owner.context.docker = self.ops._ArchiveWorkDocker(old, self.owner._custody.deadline)
         primary = None
         try:
-            if self.persisted is None:
+            if self.persisted is None and not self.owner.expected_configured_off:
                 consumer = self.owner.drained._attempt.consumer
                 action = consumer.actions[-1]
                 self.custody = self.owner.operation._journal.open_custody(self.owner.generation, action.sequence)
@@ -906,6 +961,7 @@ class _ArchivePackage:
             destination = _DestinationRestore(self)
             destination.start()
             destination.stop_and_restore_off()
+            destination.disable_restored_daily()
             destination.compare_post_restore()
             destination.verify_role_visibility()
             self.completed_destination=destination
@@ -1722,6 +1778,7 @@ class _DestinationRestore:
         self.lock_fd = None
         self.actions, self.imports, self.stages, self.receipts = [], [], [], {}
         self.active_custody = None
+        self.restore_helper = None
         self.head = self.begin_event = self.summary = None
         self.closed = False
         package.destination = self
@@ -1771,11 +1828,19 @@ class _DestinationRestore:
         self.archive = self.ops.journal._json(raw, self.ops.journal.MAX_SMALL)
         self.archive_sha256 = self.ops._digest(raw)
         source_control = self.archive["control_epoch"]
+        self.source_proof = self.source_daily = None
+        predecessor = self.archive["generation"]
+        if _configured_off_archive(self.archive):
+            with open(self.package.path / "audit.stream", "rb") as source:
+                _, self.source_proof, predecessor, controls = self.owner.audit_module.decode_configured_off_source(
+                    source, self.archive["account_id"], source_control)
+            self.source_daily = controls["daily"]
+            _require(self.source_proof == self.archive["source_proof"], "PAPER_BACKUP_DESCRIPTOR_BINDING")
         self.store.advance_floor(max(source_control,self.owner._custody.floor))
         generation = str(uuid.uuid4())
         root = dict(schema="owner-beta-paper-operation-intent-v1", installation_id=self.store.installation_id,
             generation=generation, account_id=self.archive["account_id"],
-            predecessor_generation=self.archive["generation"], request_key=generation+":begin",
+            predecessor_generation=predecessor, request_key=generation+":begin",
             purpose="RESTORE", scope="COMBINED_BACKUP", expected_epoch=source_control,
             local_epoch_floor=self.store.epoch_floor, release_manifest_sha256=self.owner.context.manifest_sha256,
             artifact_sha256=self.archive_sha256, resume_target_id=None)
@@ -1882,7 +1947,10 @@ class _DestinationRestore:
         # BEGIN independently verified the archive before dispatch. Bind its
         # original archive object, as in the adopted frozen trace, with no SQL event.
         self.stage("RESTORE_VERIFIED",self.archive_sha256,None,self.fence)
-        receipt = dict(schema="owner-beta-paper-restore-receipt-v1",installation_id=root["installation_id"],
+        configured_off = _configured_off_archive(self.archive)
+        receipt = dict(schema=("owner-beta-paper-restore-receipt-v2" if configured_off
+                               else "owner-beta-paper-restore-receipt-v1"),
+            installation_id=root["installation_id"],
             generation=root["generation"],account_id=root["account_id"],request_key=root["generation"]+":restore-off",
             scope=root["scope"],expected_epoch=root["expected_epoch"],resulting_epoch=self.fence,
             intent_sha256=self.operation.intent_sha256,stage_sha256=self.head[1],
@@ -1890,12 +1958,74 @@ class _DestinationRestore:
             observation_id=self.summary["observation_id"],release_manifest_sha256=root["release_manifest_sha256"],
             boot_id=self.ops._current_boot_id(),observed=self.ops._stage_observation(),
             source_installation_id=self.archive["installation_id"],source_generation=self.archive["generation"],
-            source_epoch=self.archive["control_epoch"]-1,archive_sha256=self.archive_sha256,
+            source_epoch=_restore_source_epoch(self.archive),archive_sha256=self.archive_sha256,
             source_audit_sha256=self.archive["audit_sha256"],restored_audit_sha256=self.archive["audit_sha256"],
             destination_epoch_floor=root["local_epoch_floor"])
+        if configured_off:
+            receipt["source_proof_sha256"] = self.ops._digest(
+                self.ops._canonical(self.archive["source_proof"]))
+            self.install_configured_off_restore()
         result = self.invoke("restore-off",receipt)
         self.stage("RESTORED_COMMITTED",self.retain(result),result["data"]["event_id"],self.fence+1)
         self.store.advance_floor(self.fence+1)
+        self.revalidate()
+
+    def install_configured_off_restore(self):
+        self.revalidate()
+        _require(self.restore_helper is None and _configured_off_archive(self.archive)
+                 and set(self.receipts) == {"begin", "reconcile"}
+                 and type(self.package.guest) is _PaperRestoreGuest,
+                 "PAPER_BACKUP_PRIVATE")
+        files = self.owner.selection._backup_module().files
+        helper = self.owner.selection._OriginalFile(files,
+            self.owner.context.release_path + _CONFIGURED_OFF_RESTORE_SQL,
+            uid=0, gid=0, maximum=65_536)
+        self.package.originals.append(helper)
+        helper.revalidate(files)
+        raw = os.pread(helper.fd, helper.size+1, 0)
+        _require(len(raw) == helper.size and helper.sha256 == _CONFIGURED_OFF_RESTORE_SHA256
+                 and self.ops._digest(raw) == helper.sha256, "PAPER_BACKUP_RESTORE_HELPER")
+        reader = _GuestClient(self.package, "migration_owner")
+        try:
+            reader.start()
+            _require(reader.exchange(b"ROLLBACK;\n" + raw) == b"PAPER_CONFIGURED_OFF_RESTORE_GUEST: INSTALLED\n",
+                     "PAPER_BACKUP_RESTORE_HELPER")
+        finally:
+            reader.close()
+        helper.revalidate(files)
+        self.restore_helper = helper
+        self.revalidate()
+
+    def copy_configured_off_helper(self, stage_fd, verb, custody):
+        if self.restore_helper is None:
+            return
+        _require(verb == "restore-off" or verb == "readback" and
+                 self.ops.journal._json(custody._action, self.ops.journal.MAX_SMALL)["verb"] == "restore-off",
+                 "PAPER_BACKUP_PRIVATE")
+        helper = self.restore_helper
+        files = self.owner.selection._backup_module().files
+        helper.revalidate(files)
+        raw = os.pread(helper.fd, helper.size+1, 0)
+        _require(len(raw) == helper.size and self.ops._digest(raw) == _CONFIGURED_OFF_RESTORE_SHA256,
+                 "PAPER_BACKUP_RESTORE_HELPER")
+        self.ops._write_file(stage_fd, "configured-off-restore.sql", raw, 0o400)
+        helper.revalidate(files)
+
+    def disable_restored_daily(self):
+        if self.source_daily is None or not self.source_daily["enabled"]:
+            return
+        self.revalidate()
+        guest = self.package.guest
+        _require(type(guest) is _PaperRestoreGuest, "PAPER_BACKUP_PRIVATE")
+        reader = _GuestClient(self.package, guest.admin)
+        try:
+            reader.start()
+            sql = self.owner.selection._backup_module().isolated_daily_off_sql(
+                (True, int(self.source_daily["activation_epoch"])), role=guest.admin, socket_only=True)
+            _require(reader.exchange(b"ROLLBACK;\n" + sql.encode("ascii")) ==
+                     b"DAILY_NIGHTLY_ISOLATED: DISABLED\n", "PAPER_BACKUP_RESTORED_DAILY")
+        finally:
+            reader.close()
         self.revalidate()
 
     def compare_post_restore(self):
@@ -1934,6 +2064,9 @@ class _DestinationRestore:
                 self.package.originals.append(_ArchiveOriginal(self.package, after_path))
                 allowed = {"owner_beta_paper_control", "owner_beta_paper_events", "owner_beta_paper_operations",
                            "owner_beta_paper_operation_observations", "owner_beta_paper_recovery_grants"}
+                if self.source_daily is not None:
+                    allowed.add("owner_beta_daily_control")
+
                 def selected_rows(stream):
                     selected = {}
                     stream.seek(0)
@@ -1955,11 +2088,14 @@ class _DestinationRestore:
                 root = self.operation._intent
                 expected = dict(generation=root["generation"],installation_id=root["installation_id"],
                     account_id=root["account_id"],source_generation=self.archive["generation"],
-                    source_installation_id=self.archive["installation_id"],source_epoch=self.archive["control_epoch"]-1,
+                    source_installation_id=self.archive["installation_id"],source_epoch=_restore_source_epoch(self.archive),
                     source_control_epoch=self.archive["control_epoch"],expected_epoch=root["expected_epoch"],
                     destination_epoch_floor=root["local_epoch_floor"],fence_epoch=self.fence,restore_epoch=self.fence+1,
                     archive_sha256=self.archive_sha256,source_audit_sha256=self.archive["audit_sha256"],
                     receipts=self.receipts,rows=changes)
+                if self.source_proof is not None:
+                    expected.update(source_proof=self.source_proof, daily_control=self.source_daily,
+                                    source_predecessor_generation=root["predecessor_generation"])
                 after.seek(0)
                 with open(self.package.path / "audit.stream", "rb") as source:
                     audit.compare_restore_delta(source,after,expected,
@@ -2309,6 +2445,7 @@ class _LocalDump:
 
 
 class _HeldPaperSnapshot:
+    expected_configured_off = False
     local_dump = None  # the controller's own pg_dump, registered before it is started
 
     def __init__(self, token, context, drained, maximum):
@@ -2320,21 +2457,28 @@ class _HeldPaperSnapshot:
         _require(type(drained) is self.ops.DrainedHandle and drained._attempt.context is context
                  and type(maximum) is int and 0 < maximum <= 2**50, "PAPER_BACKUP_CONTEXT")
         self.operation = drained._attempt.operation
-        self.generation, self.maximum = self.operation.generation, maximum
+        self.generation = self.operation.generation
+        self._initialize(maximum)
+        self._custody = self.ops._open_archive_custody(drained)
+        self._custody.bind(self)
+        self._register_custody()
+
+    def _initialize(self, maximum):
+        self.maximum = maximum
         self.clients, self.sources, self._requirements = [], [], None
+        self.control_guard = None
         self.spools = {}
         self.root = self.root_tree = self.secret_sources = self.pgpass_identity = None
         self.exporter = self._snapshot = self.audit = self.description = self.selected = None
         self.package = None
-        self.space = _SPACES.get(context)
+        self.space = _SPACES.get(self.context)
         _require(type(self.space) is _CaptureSpace and not self.space.closed,
                  "PAPER_BACKUP_RESERVATION_REQUIRED")
         self.selection_tree = self.space.tree
         self.root, self.root_tree, self.selection = self.space.root, self.space.root_tree, self.space.selection
         self._selection_taken = self._selection_released = False
         self._closed = self._poisoned = self._entered = False
-        self._custody = self.ops._open_archive_custody(drained)
-        self._custody.bind(self)
+    def _register_custody(self):
         _OWNERS[self._custody] = self
         self.space.owner = self
 
@@ -2560,6 +2704,7 @@ class _HeldPaperSnapshot:
                 os.close(fd)
             os.fsync(self.root_tree.fd)
             secret = data = view = None
+            self._start_source_guard()
             self.exporter = _Client(self, "exporter")
             self.clients.append(self.exporter)  # cleanup custody precedes create
             self.exporter.start()
@@ -2580,7 +2725,7 @@ class _HeldPaperSnapshot:
             self.audit = self._new_spool("audit.stream")
             self.exporter.exchange(os.pread(sql.fd, sql.size+1, 0), self.audit)
             os.fsync(self.audit.fileno()); self.audit.seek(0)
-            self.description = self.audit_module.decode(self.audit)
+            self.description = self._decode_source_audit()
             self._seal_spool("audit.stream", self.audit)
             _require(self.description["projection_sha256"] == projection.sha256,
                      "PAPER_BACKUP_PROJECTION")
@@ -2599,6 +2744,12 @@ class _HeldPaperSnapshot:
                 pass  # primary retained; custody remains UNKNOWN on cleanup loss
             raise
 
+    def _start_source_guard(self):
+        pass  # the original OFF_COMMITTED custody already holds its source fence
+
+    def _decode_source_audit(self):
+        return self.audit_module.decode(self.audit)
+
     def capture(self, limits, storage_values=None):
         """Consume selected originals under the actual exported transaction.
 
@@ -2609,6 +2760,8 @@ class _HeldPaperSnapshot:
         with self.selection.open_selected_paper_files(self.context, self.drained, self, limits) as selected:
             self.selected = selected
             try:
+                if self.expected_configured_off:
+                    self.fence.verify_references(selected.snapshot.manifest())
                 with self._new_spool("files.bundle") as stream:
                     selected.snapshot.write(stream)
                     self._seal_spool("files.bundle", stream)
@@ -2666,16 +2819,23 @@ class _HeldPaperSnapshot:
         self.revalidate()
         return rows
 
+    def _archive_origin(self):
+        root = self.operation._intent
+        consumer = self.drained._attempt.consumer
+        return dict(schema=_ARCHIVE_V1, profile="paper-combined",
+            installation_id=root["installation_id"], generation=root["generation"],
+            account_id=root["account_id"], control_epoch=consumer.floor,
+            release_manifest_sha256=root["release_manifest_sha256"],
+            drain_receipt_sha256=self.ops._digest(consumer.actions[-1]._artifact_bytes))
+
     def _describe_archive(self, snapshot, source_files, limits):
         """Seal descriptors of source bytes; these grant no restore authority."""
         self.revalidate()
-        root = self.operation._intent
-        consumer = self.drained._attempt.consumer
+        archive = self._archive_origin()
         capability = self.context.verified
         capability.revalidate()
         audit = {"schema": "owner-beta-paper-audit-v1",
-            "installation_id": root["installation_id"], "generation": root["generation"],
-            "account_id": root["account_id"], "control_epoch": consumer.floor,
+            **{key: archive[key] for key in _ARCHIVE_IDENTITY},
             "audit_sql_sha256": self.sources[0].sha256,
             "migration_0068_sha256": None,
             "groups": [{"group": row["name"], "sha256": row["sha256"],
@@ -2690,18 +2850,11 @@ class _HeldPaperSnapshot:
         audit["migration_0068_sha256"] = release._json(cap_bytes, release.MAX_PROCESS)["migration_0068_sha256"]
         audit["groups"].sort(key=lambda row: row["group"])
         audit_bytes = self.ops._canonical(audit)
-        binding = {"domain": "lagrange-paper-snapshot-binding-v1",
-            "installation_id": root["installation_id"], "generation": root["generation"],
-            "account_id": root["account_id"], "control_epoch": consumer.floor,
-            "database_dump_sha256": self.spools["postgres.dump"][3],
-            "audit_stream_sha256": self.spools["audit.stream"][3],
-            "files_sha256": self.spools["files.bundle"][3]}
-        archive = {k: binding[k] for k in ("installation_id", "generation", "account_id",
-                                          "control_epoch", "database_dump_sha256", "files_sha256")}
-        archive.update(schema="owner-beta-paper-archive-v1", profile="paper-combined",
-            drain_receipt_sha256=self.ops._digest(consumer.actions[-1]._artifact_bytes),
+        binding = _snapshot_binding(archive, self.spools["postgres.dump"][3],
+                                    self.spools["audit.stream"][3], self.spools["files.bundle"][3])
+        archive.update(database_dump_sha256=binding["database_dump_sha256"],
+            files_sha256=binding["files_sha256"],
             created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            release_manifest_sha256=root["release_manifest_sha256"],
             capability_sha256=capability.capability_sha256,
             database_snapshot_sha256=self.ops._digest(self.ops._canonical(binding)),
             audit_sha256=self.ops._digest(audit_bytes),
@@ -2820,7 +2973,13 @@ class _HeldPaperSnapshot:
         if self.package is not None:
             _require(self.package.closed,"PAPER_BACKUP_CLEANUP_UNKNOWN")
         for client in reversed(self.clients):
-            client.close()
+            if client is not self.control_guard:
+                client.close()
+        if self.control_guard is not None:
+            _require(self._only_control_guard(), "PAPER_BACKUP_CLEANUP_UNKNOWN")
+            self._snapshot = None
+            self.revalidate()
+            return
         _require(self._resources_closed(),"PAPER_BACKUP_CLEANUP_UNKNOWN")
         self.revalidate()  # includes an independent zero-source-backend observation
         if self.secret_sources is not None:
@@ -2834,11 +2993,19 @@ class _HeldPaperSnapshot:
         self._snapshot=None
         self.revalidate()
 
+    def _only_control_guard(self):
+        return (self.control_guard is not None and not self.control_guard.absent
+                and all(client.absent or client is self.control_guard for client in self.clients)
+                and (self.package is None or self.package.closed)
+                and (self.local_dump is None or self.local_dump.closed))
+
     def verify_candidate(self,candidate,limits,storage_values):
         _require(type(candidate) is _PaperPublication and candidate in _PUBLICATIONS
             and candidate.owner is self and candidate.retained.publication is candidate
-            and not candidate.retained.completed and self._resources_closed()
-            and self._snapshot is None and self.secret_sources is None,"PAPER_BACKUP_PRIVATE")
+            and not candidate.retained.completed and self._snapshot is None
+            and ((self._resources_closed() and self.secret_sources is None)
+                 or (self.expected_configured_off and self._only_control_guard())),
+            "PAPER_BACKUP_PRIVATE")
         candidate.retained.revalidate()
         if self.package is not None:
             _require(self.package.closed,"PAPER_BACKUP_CLEANUP_UNKNOWN")
@@ -2984,6 +3151,102 @@ def open_snapshot(context, drained, maximum):
     return _HeldPaperSnapshot(_HELD_PAPER_SNAPSHOT_TOKEN, context, drained, maximum)
 
 
+_CONFIGURED_OFF_SNAPSHOT = object()
+_CONTROL_LOCK_SQL = "/deploy/db/owner-beta-paper-off-source-fence.sql"
+_CONTROL_LOCK_SHA256 = "sha256:c9945fc6a66b7da610588fb8191b039310811e91cd57cfd1410c568e80fe0220"
+
+
+class _ConfiguredOffCustody:
+    """Own the same release lock and origin controls during both guest verifications."""
+
+    def __init__(self, owner):
+        self.owner, self.deadline, self.floor = owner, owner.space.deadline, owner.epoch
+        self.observer = owner.ops._ConfiguredOffObserver(
+            owner.context, self.deadline, owner.account, owner.epoch, owner.fence.daily_state)
+        self.closed = False
+
+    def revalidate(self):
+        o = self.owner
+        _require(not self.closed and _OWNERS.get(self) is o and o.space.owner is o
+                 and not o._closed and not o._poisoned, "PAPER_BACKUP_CLOSED")
+        self.deadline.work_remaining()
+        o.context.revalidate()
+        o.journal.revalidate()
+        o._check_resources()
+        call = None if o.package is None else o.package.call
+        _require(not o.context._invocations or o.context._invocations == {call}, "PAPER_BACKUP_PRIVATE")
+        if self.observer.publication_lease is not None:
+            self.observer.publication_lease.check()
+
+    def milestone(self):
+        self.revalidate()
+        self.owner.fence.verify_stopped()
+        self.observer.check_publication_locks()
+        self.observer.database("observe")
+        self.revalidate()
+
+    def close(self):
+        _require(self.owner._resources_closed(), "PAPER_BACKUP_CLEANUP_UNKNOWN")
+        self.observer.close()
+        self.closed = True
+
+
+class _HeldConfiguredOffSnapshot(_HeldPaperSnapshot):
+    """Same exported MVCC snapshot and file closure with independent OFF provenance."""
+
+    expected_configured_off = True
+
+    def __init__(self, token, context, journal, account, epoch, fence, maximum):
+        _require(token is _CONFIGURED_OFF_SNAPSHOT and type(maximum) is int
+                 and 0 < maximum <= 2**50, "PAPER_BACKUP_PRIVATE")
+        self._token, self.context, self.ops = token, context, _operations(context)
+        self.drained = self.operation = None
+        self.journal, self.account, self.epoch = journal, account, epoch
+        self.fence, self.generation = fence, str(uuid.uuid4())
+        self.source_proof = self.source_paper = None
+        self._initialize(maximum)
+        daily = self.selection._backup_module()
+        _require(self.space.owner is None and type(fence) is daily._NightlyPaperFence
+                 and fence.matches(context, context.lock_identity)
+                 and type(journal) is self.ops.journal.Journal
+                 and journal._lock_id == context.lock_identity
+                 and journal.epoch_floor == epoch, "PAPER_BACKUP_PRIVATE")
+        self._custody = _ConfiguredOffCustody(self)
+        self._register_custody()
+
+    def _start_source_guard(self):
+        observer = self._custody.observer
+        observer.enter_publication_locks(self.selection._backup_module(),
+                                         self.fence.binding, self.fence.config)
+        self._custody.milestone()
+        self.control_guard = _Client(self, "control-guard")
+        self.clients.append(self.control_guard)
+        self.control_guard.start()
+        sql = self.ops.daily.install.read_root_file(
+            self.context.release_path + _CONTROL_LOCK_SQL, maximum=16_384)
+        _require(self.ops._digest(sql) == _CONTROL_LOCK_SHA256
+                 and self.control_guard.exchange(sql) == b"PAPER_ARCHIVE: CONTROL_LOCKED\n",
+                 "PAPER_BACKUP_CONTROL_LOCK")
+        self._custody.milestone()
+
+    def _decode_source_audit(self):
+        description, self.source_proof, _predecessor, controls = self.audit_module.decode_configured_off_source(
+            self.audit, self.account, self.epoch)
+        self.source_paper, daily = controls["paper"], controls["daily"]
+        _require((daily["enabled"], daily["activation_epoch"]) == self.fence.daily_state
+                 and self.source_proof == self._custody.observer.proof(),
+                 "PAPER_BACKUP_CONTROL_LOCK")
+        self._custody.milestone()
+        return description
+
+    def _archive_origin(self):
+        _require(self.source_proof is not None, "PAPER_BACKUP_AUDIT_INCOMPLETE")
+        return dict(schema=_ARCHIVE_V2, profile=_CONFIGURED_OFF_PROFILE,
+            installation_id=self.journal.installation_id, generation=self.generation,
+            account_id=self.account, control_epoch=self.epoch,
+            release_manifest_sha256=self.context.manifest_sha256, source_proof=self.source_proof)
+
+
 class _PersistedArchiveCustody:
     """Read-only source context; authority is confined to owned private clones."""
     def __init__(self,owner,floor):
@@ -3019,10 +3282,14 @@ class _PersistedArchiveOwner:
     _archive_capture=_HeldPaperSnapshot._archive_capture
     verify_persisted=_HeldPaperSnapshot.verify_persisted
     close=_HeldPaperSnapshot.close
-    def __init__(self,context,space,maximum,floor):
+    def __init__(self,context,space,maximum,floor,*,expected_configured_off=None,expected_archive=None,
+                 expected_live=None):
         _require(type(space) is _CaptureSpace and _SPACES.get(context) is space
             and space.owner is None and type(floor) is int and floor>=0,"PAPER_BACKUP_PRIVATE")
         self.context,self.ops,self.space=context,_operations(context),space
+        self.expected_configured_off=expected_configured_off
+        self.expected_archive=expected_archive
+        self.expected_live=expected_live
         self.maximum=maximum
         self.root,self.root_tree,self.selection=space.root,space.root_tree,space.selection
         self.clients,self.sources,self.spools=[],[],{}
@@ -3074,6 +3341,126 @@ def inspect_presence(context, lock_fd, *, off_consent_backup=False):
         with history as inventory:
             inventory.revalidate()
             return "LEGACY_EMPTY" if inventory._presence is ops._HISTORY_EMPTY else "REQUIRED"
+
+
+def _configured_off_identity(live, inventory):
+    inventory.revalidate()
+    ops = _operations(live)
+    _require(inventory._configured and inventory._pending_epoch is None
+             and live.values.get("OWNER_BETA_PAPER_MODE") == "disabled", "PAPER_BACKUP_CONFIGURATION_UNKNOWN")
+    page = ops._json(inventory._pages[0][1], ops.MAX_PAGE)
+    account, epoch = page["account_id"], page["control_epoch"]
+    ops.journal._uuid(account)
+    ops.journal._counter(epoch)
+    _require(page["data"]["state"] == "OFF"
+             and inventory._local.floor_value == epoch
+             and inventory._local.files["installation_id"] is not None,
+             "PAPER_BACKUP_CONFIGURED_OFF_REQUIRED")
+    return account, epoch
+
+
+def inspect_nightly_paper(context, lock_fd):
+    """Only a verified empty installation or sealed configured OFF can use nightly."""
+    ops, values = _application_context(context)
+    with ops.open_context(values, lock_fd) as live, live.probe_history() as inventory:
+        inventory.revalidate()
+        if inventory._presence is ops._HISTORY_EMPTY:
+            return "LEGACY_EMPTY"
+        _configured_off_identity(live, inventory)
+        return "CONFIGURED_OFF"
+
+
+def preflight_nightly_paper(context, lock_fd, daily_state):
+    ops, values = _application_context(context)
+    with ops.open_context(values, lock_fd) as live:
+        with live.probe_history() as inventory:
+            account, epoch = _configured_off_identity(live, inventory)
+        observer = ops._ConfiguredOffObserver(live, ops._ArchiveDeadline(), account, epoch, daily_state)
+        try:
+            observer.database("observe")
+            observer.observe_source_phase()
+        finally:
+            observer.close()
+
+
+def observe_nightly_paper(context, lock_fd, daily_state, expected_origin):
+    """Confirm the same controls and source reservation after cohort resume."""
+    ops, values = _application_context(context)
+    _require(type(expected_origin) is str and _SHA256.fullmatch(expected_origin),
+             "PAPER_BACKUP_DESCRIPTOR_BINDING")
+    with ops.open_context(values, lock_fd) as live:
+        with live.probe_history() as inventory:
+            account, epoch = _configured_off_identity(live, inventory)
+        observer = ops._ConfiguredOffObserver(live, ops._ArchiveDeadline(), account, epoch, daily_state)
+        try:
+            observer.database("observe")
+            observer.observe_source_phase()
+            _require(observer.origin_sha256() == expected_origin, "PAPER_BACKUP_LIVE_ORIGIN_CHANGED")
+        finally:
+            observer.close()
+
+
+def run_configured_off_nightly(context, lock_fd, fence, maximum, storage_values, *, verify, expected_archive=None):
+    """Use an already-fenced original cohort. Only the clone performs RESTORED_OFF."""
+    ops, values = _application_context(context)
+    run = _CaptureRun(ops.open_context(values, lock_fd))
+    live = run.live
+    candidate = None
+    try:
+        daily = _local("owner_beta_paper_backup_selection",
+                       "owner-beta-paper-backup-selection.py")._backup_module()
+        _require(type(fence) is daily._NightlyPaperFence and fence.matches(live, live.lock_identity)
+                 and (not verify and expected_archive is None or
+                      verify and type(expected_archive) is str and _SHA256.fullmatch(expected_archive)),
+                 "PAPER_BACKUP_PRIVATE")
+        fence.verify_stopped()
+        with live.probe_history() as inventory:
+            account, epoch = _configured_off_identity(live, inventory)
+        run.space = reserve_capture(live)
+        limits = daily.files.Limits(maximum)
+        if verify:
+            observer = ops._ConfiguredOffObserver(live, run.space.deadline, account, epoch, fence.daily_state)
+            try:
+                observer.database("observe")
+                observer.observe_source_phase()
+                origin = observer.origin_sha256()
+                owner = _PersistedArchiveOwner(live, run.space, maximum, epoch,
+                    expected_configured_off=True, expected_archive=expected_archive,
+                    expected_live=(account, epoch, observer.proof()))
+                with contextlib.closing(_PaperStorage(owner, storage_values).latest()) as selected:
+                    owner.verify_persisted(selected, limits, storage_values)
+                fence.verify_stopped()
+                observer.database("observe")
+                _require(observer.origin_sha256() == origin, "PAPER_BACKUP_LIVE_ORIGIN_CHANGED")
+            finally:
+                observer.close()
+            return PaperHandledResult("NIGHTLY_PAPER_CONFIGURED_OFF_VERIFIED_ISOLATED_DISABLED",
+                archive_sha256=expected_archive,
+                origin_sha256=origin)
+        run.manager = ops.journal.open_journal(live.install_root, live.lock_fd, bootstrap=False)
+        journal = run.store = run.manager.__enter__()
+        with _HeldConfiguredOffSnapshot(_CONFIGURED_OFF_SNAPSHOT, live, journal, account, epoch,
+                                        fence, maximum) as held:
+            candidate = held.capture(limits, storage_values)
+            held.release_capture_clients()
+            held.verify_candidate(candidate, limits, storage_values)
+            held._custody.milestone()
+            origin = held._custody.observer.origin_sha256()
+            run.close()
+            candidate.publish()
+            return PaperHandledResult("NIGHTLY_PAPER_CONFIGURED_OFF_VERIFIED_SOURCE_UNCHANGED",
+                candidate.generation, candidate.archive_sha256, origin)
+    finally:
+        primary = sys.exc_info()[0] is not None
+        try:
+            if candidate is not None:
+                candidate.close()
+        finally:
+            try:
+                run.close()
+            except BaseException:
+                if not primary:
+                    raise
 
 
 class _CaptureRun:

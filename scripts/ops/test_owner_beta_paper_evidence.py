@@ -3,6 +3,7 @@
 import copy
 import ast
 import errno
+import fcntl
 import json
 import importlib.util
 import os
@@ -142,6 +143,7 @@ class SyntheticSource:
             secret_root='/synthetic-secrets',database='synthetic',project='synthetic',network='synthetic-db',
             state_dir=str(self.root/'state'),lock_file=str(self.root/'state/lock'),max_source_seconds=60)
         for name in ('events','.control'):(self.root/'evidence'/name).mkdir(parents=True,exist_ok=True)
+        (self.root/'evidence'/'.control'/'archive.lock').touch(mode=0o600)
         for key in ('production_env_file','calendar_file','release_manifest_file'):
             Path(self.b[key]).parent.mkdir(parents=True,exist_ok=True);Path(self.b[key]).write_bytes(b'SYNTHETIC-NO-PROVIDER')
         self.b['production_env_sha256']=w.digest(Path(self.b['production_env_file']).read_bytes())
@@ -390,6 +392,151 @@ class ProducerTests(unittest.TestCase):
                 before=list(rig.provider_phases)
                 with self.assertRaises((w.Rejected,OSError)):rig.run()
                 self.assertEqual(rig.provider_phases,before);self.assertEqual(rig.launches,1)
+
+class ArchiveGateTests(unittest.TestCase):
+    def arm_snapshot(self, rig, before):
+        journal = rig.scheduler.j
+        claim = journal.directory.parent.parent / '.control' / (
+            w.dispatch_key(rig.b['cohort'], rig.session) + '.json')
+        observed = (claim.read_bytes(), tuple(
+            p.read_bytes() for p in sorted(journal.directory.glob('*.json'))))
+        self.assertEqual([event['kind'] for event in journal.events],
+                         ['STARTED', 'ARM_INTENT', 'ARMED'])
+        if before is not None:
+            self.assertEqual(observed, before)
+        return observed
+
+    def at_timer(self, rig, callback):
+        original_select = w.select.select
+        due = w.due_ns(rig.session)
+        def selected(read, *args):
+            if getattr(read[0], 'due', None) == due:
+                callback()
+            return original_select(read, *args)
+        return mock.patch.object(w.select, 'select', side_effect=selected)
+
+    def test_archive_wait_retains_exact_arm_claim_current_and_delivers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rig = SyntheticSource(folder)
+            observations = []
+            path = rig.root / 'evidence' / '.control' / 'archive.lock'
+            with path.open('rb') as backup, rig.patches():
+                current = rig.scheduler.authority
+                def during_arm(kind, journal):
+                    if kind == 'ARMED':
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(backup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                rig.event_hook = during_arm
+                def during_wait():
+                    fcntl.flock(backup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    before = self.arm_snapshot(rig, None)
+                    rig.scheduler.guard()
+                    self.arm_snapshot(rig, before)
+                    self.assertIs(rig.scheduler.authority,current)
+                    rig.scheduler.authority.poll.assert_called()
+                    rig.scheduler.authority.revoke.assert_not_called()
+                    self.assertFalse(os.get_inheritable(rig.scheduler.archive.fd))
+                    self.assertEqual(rig.launches, 0)
+                    observations.append(before)
+                    fcntl.flock(backup, fcntl.LOCK_UN)
+                with self.at_timer(rig, during_wait):
+                    rig.scheduler.run_session(rig.session)
+            self.assertEqual(len(observations), 1)
+            self.assertEqual(rig.launches, 1)
+            w.verify_chain(rig.scheduler.j.events, 'LINKED')
+
+    def test_busy_dispatch_and_interrupt_revoke_before_fenced_terminal(self):
+        for event in ('busy', 'interrupt'):
+            with self.subTest(event=event), tempfile.TemporaryDirectory() as folder:
+                rig = SyntheticSource(folder)
+                path = rig.root / 'evidence' / '.control' / 'archive.lock'
+                observed = []
+                with path.open('rb') as backup, rig.patches():
+                    def conflict():
+                        fcntl.flock(backup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        observed.append(self.arm_snapshot(rig, None))
+                        if event == 'interrupt':
+                            raise w.Rejected('INTERRUPTED')
+                    def release_after_current_revoked(delay):
+                        self.assertGreater(delay, 0)
+                        rig.scheduler.authority.revoke.assert_called()
+                        self.arm_snapshot(rig, observed[0])
+                        self.assertEqual(rig.launches, 0)
+                        fcntl.flock(backup, fcntl.LOCK_UN)
+                    with self.at_timer(rig, conflict), mock.patch.object(w.time, 'sleep', side_effect=release_after_current_revoked) as wait:
+                        with self.assertRaises(w.Rejected):
+                            rig.scheduler.run_session(rig.session)
+                    wait.assert_called_once()
+                self.assertEqual(rig.launches, 0)
+                self.assertFalse(rig.helper_ops)
+                self.assertEqual([e['kind'] for e in rig.scheduler.j.events],
+                                 ['STARTED', 'ARM_INTENT', 'ARMED', 'FAILED'])
+                with self.assertRaises((w.Rejected, OSError)):
+                    rig.run()
+                self.assertEqual(rig.launches, 0)
+
+    def test_archive_replacement_invalidates_without_terminal_write(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rig = SyntheticSource(folder)
+            path = rig.root / 'evidence' / '.control' / 'archive.lock'
+            with rig.patches():
+                def replace():
+                    path.rename(path.with_suffix('.old'))
+                    path.touch(mode=0o600)
+                with self.at_timer(rig, replace), self.assertRaises(w.Rejected):
+                    rig.scheduler.run_session(rig.session)
+                rig.scheduler.authority.revoke.assert_called()
+                self.arm_snapshot(rig, None)
+                self.assertEqual(rig.launches, 0)
+                self.assertFalse(rig.helper_ops)
+
+    def test_unprovisioned_gate_refuses_before_claim_or_dispatch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rig = SyntheticSource(folder)
+            (rig.root / 'evidence' / '.control' / 'archive.lock').unlink()
+            with rig.patches(), self.assertRaises((w.Rejected, OSError)):
+                rig.scheduler.run_session(rig.session)
+            rig.scheduler.authority.revoke.assert_called()
+            self.assertIsNone(rig.scheduler.j)
+            self.assertEqual(list((rig.root / 'evidence' / 'events').iterdir()), [])
+            self.assertEqual(rig.launches, 0)
+
+    def test_gate_cannot_continue_after_hardlink_or_fd_inheritance(self):
+        for fault in ('link', 'inherit'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as folder:
+                rig = SyntheticSource(folder)
+                path = rig.root / 'evidence' / '.control' / 'archive.lock'
+                with rig.patches():
+                    def unsafe():
+                        if fault == 'link':
+                            os.link(path,path.with_suffix('.alias'))
+                        else:
+                            os.set_inheritable(rig.scheduler.archive.fd,True)
+                    with self.at_timer(rig, unsafe), self.assertRaises(w.Rejected):
+                        rig.scheduler.run_session(rig.session)
+                    rig.scheduler.authority.revoke.assert_called()
+                    self.arm_snapshot(rig,None)
+                    self.assertEqual(rig.launches,0)
+
+    def test_archive_gate_busy_cleanup_has_a_hard_bound(self):
+        with tempfile.TemporaryDirectory() as folder:
+            rig = SyntheticSource(folder)
+            path = rig.root / 'evidence' / '.control' / 'archive.lock'
+            elapsed = []
+            with path.open('rb') as backup, rig.patches():
+                def busy():
+                    fcntl.flock(backup, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                def advance(delay):
+                    elapsed.append(delay)
+                    rig.now += int(delay * 10**9)
+                with self.at_timer(rig, busy), mock.patch.object(w.time, 'sleep', side_effect=advance):
+                    with self.assertRaises(w.Rejected):
+                        rig.scheduler.run_session(rig.session)
+                self.assertEqual(sum(elapsed), w.TERM_GRACE + w.KILL_GRACE + w.CONTAINER_CLEANUP)
+                rig.scheduler.authority.revoke.assert_called()
+                self.arm_snapshot(rig, None)
+                self.assertEqual(rig.launches, 0)
+
 
 class HarnessTests(unittest.TestCase):
     def harness(self):
@@ -922,8 +1069,9 @@ class CurrentWireTests(unittest.TestCase):
     def test_actual_helper_mount_allowlist_rejects_leaf_extra_writable_and_env(self):
         with tempfile.TemporaryDirectory() as folder:
             rig=SyntheticSource(folder)
-            with rig.patches():
-                rig.scheduler.j=w.Journal(rig.b,rig.session)
+            with rig.patches(), w.archive_lock(rig.b['evidence_root']) as archive:
+                self.assertTrue(archive.try_shared())
+                rig.scheduler.j=w.Journal(rig.b,rig.session,archive)
                 args=rig.runtime.paper_evidence_helper_args(rig.b,'reserve',rig.scheduler.j.slot,(),'lagrange-paper-fixture',worker_historical_root='/synthetic/artifacts/historical-price-beta-root')
                 rig.database=lambda _:{}
                 rig.call(args);value=next(iter(rig.objects.values()))
@@ -1070,6 +1218,7 @@ class CurrentAuthorityTests(unittest.TestCase):
         fs=PublicationMemory();b=fs.b;contents={b['production_env_file']:b'synthetic env',b['calendar_file']:b'synthetic calendar',b['release_manifest_file']:b'synthetic manifest'}
         b['production_env_sha256']=w.digest(contents[b['production_env_file']]);b['cohort']['calendar_sha256']=w.digest(contents[b['calendar_file']]);b['cohort']['release_manifest_sha256']=w.digest(contents[b['release_manifest_file']]);b['cohort']['semantic_config_sha256']=w.semantic_hash(b)
         scheduler=w.Scheduler.__new__(w.Scheduler);scheduler.b=b;scheduler.pin=w.canonical(b);scheduler.path='/synthetic/private/binding';contents[scheduler.path]=scheduler.pin
+        scheduler.archive=None;scheduler.interrupted=False
         scheduler.j=mock.Mock(common={'arm':{'boot_id':fs.value['boot_id']}});scheduler.cancel=mock.Mock(fd=7);scheduler.previous_clock=dict(fs.clock);scheduler.initial_clock=dict(fs.clock)
         with fs.patches(),mock.patch.object(w,'_binding_with_helper_projection',return_value=(b,scheduler.pin,helper_projection_fixture(b))) as binding,mock.patch.object(w,'read_file',side_effect=lambda path,*a,**k:contents[str(path)]),mock.patch.object(w.select,'select',return_value=([],[],[])):
             authority=fs.authority();authority.start();scheduler.authority=authority
@@ -1192,7 +1341,9 @@ class CurrentLifecycleTests(unittest.TestCase):
         def revoked(reason):self.assertEqual(held,[11]);self.assertEqual(reason,'STOPPED');events.append('invalidate')
         authority.start.side_effect=started;authority.revoke.side_effect=lambda reason:None if events[-1:] == ['invalidate'] else revoked(reason)
         scheduler.command=mock.Mock(side_effect=w.Rejected('INTERRUPTED'))
-        with mock.patch.object(w,'opened',opened),mock.patch.object(w.fcntl,'flock') as lock,mock.patch.object(w,'CurrentAuthority',return_value=authority),mock.patch.object(w.signal,'signal'),mock.patch.object(w,'due_ns',return_value=2**62),self.assertRaisesRegex(w.Rejected,'INTERRUPTED'):scheduler.run()
+        with mock.patch.object(w,'archive_lock',return_value=contextlib.nullcontext()) as archive,\
+             mock.patch.object(w,'opened',opened),mock.patch.object(w.fcntl,'flock') as lock,mock.patch.object(w,'CurrentAuthority',return_value=authority),mock.patch.object(w.signal,'signal'),mock.patch.object(w,'due_ns',return_value=2**62),self.assertRaisesRegex(w.Rejected,'INTERRUPTED'):scheduler.run()
+        archive.assert_called_once_with(Path(b['evidence_root']))
         lock.assert_called_once_with(11,w.fcntl.LOCK_EX|w.fcntl.LOCK_NB);self.assertFalse(held);self.assertIs(scheduler.docker.call,old_call)
         self.assertEqual(events,['start','invalidate']);scheduler.command.assert_called_once()
     def test_source_and_relay_pass_only_private_socket_never_authority_fd(self):
@@ -1228,9 +1379,22 @@ class CurrentLifecycleTests(unittest.TestCase):
         held=[];events=[];commands=[];publication=mock.Mock()
         @contextlib.contextmanager
         def opened(path,**kwargs):
-            path=str(path);held.append(path);yield 11 if path.endswith('/.control/lock') else 12;held.pop()
+            path=str(path);held.append(path)
+            try:
+                yield 11 if path.endswith('/.control/lock') else 14 if path.endswith('/archive.lock') else 12
+            finally:
+                held.pop()
+        def open_leaf(name,flags,mode,*,dir_fd):
+            if name=='archive.lock':
+                self.assertIn(b['lock_file'],held);self.assertIn(b['evidence_root']+'/.control/lock',held)
+                self.assertEqual((mode,dir_fd),(0o600,12))
+                self.assertTrue(flags&os.O_EXCL);self.assertTrue(flags&os.O_CLOEXEC)
+                events.append('ARCHIVE')
+                return 14
+            return 13
         def emit(status,reason,selected):
             self.assertIn(b['lock_file'],held);self.assertIn(b['evidence_root']+'/.control/lock',held)
+            self.assertIn(b['evidence_root']+'/.control/archive.lock',held)
             self.assertEqual((status,reason,selected),('INVALID','STOPPED',b));events.append('INVALID')
         publication.emit.side_effect=emit
         def command(argv,**kwargs):
@@ -1239,10 +1403,13 @@ class CurrentLifecycleTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             for obj,name,value in [(w,'binding',lambda path:(b,w.canonical(b))),(w,'load_lifecycle',lambda:mock.Mock()),(w.os,'geteuid',lambda:0),(w,'opened',opened),
                 (Path,'exists',lambda path:not(str(path).endswith('.service') or str(path).endswith('/current'))),(Path,'is_symlink',lambda path:False),
-                (w.os,'mkdir',mock.Mock()),(w.os,'chown',mock.Mock()),(w.os,'chmod',mock.Mock()),(w.os,'fsync',mock.Mock()),(w.os,'open',mock.Mock(return_value=13)),
+                (w.os,'mkdir',mock.Mock()),(w.os,'chown',mock.Mock()),(w.os,'chmod',mock.Mock()),(w.os,'fsync',mock.Mock()),(w.os,'open',open_leaf),
+                (w.os,'fstat',lambda fd:types.SimpleNamespace(st_dev=1,st_ino=fd)),
+                (w.os,'stat',lambda *a,**k:types.SimpleNamespace(st_dev=1,st_ino=14,st_nlink=1)),
+                (w.os,'get_inheritable',lambda fd:False),(w.os,'fchown',mock.Mock()),(w.os,'close',mock.Mock()),
                 (w.os,'fdopen',lambda *a,**k:stream),(w.os,'fchmod',mock.Mock()),(w.fcntl,'flock',mock.Mock()),(w,'CurrentPublication',mock.Mock(return_value=publication)),(w.subprocess,'run',command)]:stack.enter_context(mock.patch.object(obj,name,value))
             with contextlib.redirect_stdout(io.StringIO()):self.assertEqual(w.install_witness(args),0)
-        self.assertEqual(events,['INVALID']);publication.close.assert_called_once();self.assertFalse(held)
+        self.assertEqual(events,['ARCHIVE','INVALID']);publication.close.assert_called_once();self.assertFalse(held)
         self.assertEqual([a[1] for a in commands],['daemon-reload','show','show'])
         self.assertIn('KillMode=mixed',w.render_service(b,args.binding,args.state_dir,args.lock_file))
 
@@ -1373,7 +1540,10 @@ class LaunchRollbackTests(unittest.TestCase):
         error=w.child_failure(OSError(errno.ENOSYS,'never log this'),owned,['child:UNKNOWN'])
         scheduler=w.Scheduler.__new__(w.Scheduler);scheduler.j=None;scheduler.child=None;scheduler.owned_child=None
         scheduler.command_custodies=[];scheduler.cleanup_errors=[];scheduler.b={'evidence_root':'/synthetic/evidence'}
-        with mock.patch.object(w,'guarded_command',side_effect=error),mock.patch.object(w,'publish') as publish,self.assertRaises(w.Rejected) as caught:scheduler.command(['NEVER_LOG_ARGV'],1)
+        scheduler.archive=None;archive=mock.Mock()
+        with mock.patch.object(w,'archive_lock',return_value=contextlib.nullcontext(archive)),\
+             mock.patch.object(w,'guarded_command',side_effect=error),mock.patch.object(w,'publish') as publish,self.assertRaises(w.Rejected) as caught:scheduler.command(['NEVER_LOG_ARGV'],1)
+        archive.try_shared.assert_called_once();archive.require_shared.assert_called_once()
         self.assertIs(caught.exception.child_custody.child,child);self.assertEqual(scheduler.command_custodies,[owned]);publish.assert_called_once()
         args=publish.call_args.args;self.assertEqual(args[0],Path('/synthetic/evidence/.control'));self.assertTrue(args[1].startswith('startup-cleanup-'));self.assertTrue(args[3])
         note=json.loads(args[2]);self.assertIsNone(note['invocation_id']);self.assertEqual(note['status'],'UNKNOWN')
@@ -1387,7 +1557,10 @@ class LaunchRollbackTests(unittest.TestCase):
         error=w.child_failure(OSError(errno.ENFILE,'private-message'),owned,['child:UNKNOWN'])
         scheduler=w.Scheduler.__new__(w.Scheduler);scheduler.j=None;scheduler.child=None;scheduler.owned_child=None
         scheduler.command_custodies=[];scheduler.cleanup_errors=[];scheduler.b={'evidence_root':'/synthetic/evidence'}
-        with mock.patch.object(w,'guarded_command',side_effect=error),mock.patch.object(w,'publish',side_effect=OSError('synthetic full disk')),self.assertRaises(w.Rejected) as caught:scheduler.command(['private-argv'],1)
+        scheduler.archive=None;archive=mock.Mock()
+        with mock.patch.object(w,'archive_lock',return_value=contextlib.nullcontext(archive)),\
+             mock.patch.object(w,'guarded_command',side_effect=error),mock.patch.object(w,'publish',side_effect=OSError('synthetic full disk')),self.assertRaises(w.Rejected) as caught:scheduler.command(['private-argv'],1)
+        archive.try_shared.assert_called_once();archive.require_shared.assert_called_once()
         self.assertIs(caught.exception,error);self.assertIs(scheduler.command_custodies[0].child,child)
         self.assertEqual(error.handoff_error,'OSError');self.assertEqual(error.original_errno,errno.ENFILE)
     def test_relay_top_level_unknown_handoff_has_no_argv_or_environment(self):
@@ -1419,14 +1592,16 @@ class LifecycleBarrierTests(unittest.TestCase):
         self.assertEqual(events,['current','reset-anchor','current','current'])
     def test_barrier_precedes_actual_claim_and_arm_and_failure_never_claims(self):
         import inspect
-        source=inspect.getsource(w.Scheduler.run_session)
+        source=inspect.getsource(w.Scheduler.run_locked_session)
         self.assertLess(source.index('source_lifecycle_barrier('),source.index('self.j.claim()'))
         # Exercise the real scheduler prefix with its actual future-day clock.
-        scheduler=object.__new__(w.Scheduler);scheduler.b={};scheduler.path='/binding';scheduler.authority=mock.Mock()
-        journal=mock.Mock()
-        with mock.patch.object(w,'Journal',return_value=journal),mock.patch.object(w,'due_ns',return_value=100_000_000_000),\
+        scheduler=object.__new__(w.Scheduler);scheduler.b={'evidence_root':'/synthetic/evidence'};scheduler.path='/binding';scheduler.authority=mock.Mock()
+        journal=mock.Mock();archive=mock.Mock()
+        with mock.patch.object(w,'archive_lock',return_value=contextlib.nullcontext(archive)),\
+             mock.patch.object(w,'Journal',return_value=journal),mock.patch.object(w,'due_ns',return_value=100_000_000_000),\
              mock.patch.object(w.time,'time_ns',return_value=0),mock.patch.object(w,'source_lifecycle_barrier',side_effect=w.Rejected('ORIGIN_UNPROVEN')):
             with self.assertRaises(w.Rejected):scheduler.run_session('2026-11-12')
+        archive.try_shared.assert_called_once()
         journal.claim.assert_not_called();journal.append.assert_called_once_with('STARTED')
 
 class HelperProjectionTests(unittest.TestCase):

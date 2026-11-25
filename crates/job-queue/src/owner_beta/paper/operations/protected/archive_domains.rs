@@ -61,6 +61,7 @@ struct PairRow<'a> {
 
 /// Bounded descriptive originals. This never represents a permission to restore.
 pub(super) struct Domains {
+    configured_off: bool,
     max_rows: usize,
     max_bytes: usize,
     used_rows: usize,
@@ -75,6 +76,7 @@ pub(super) struct Domains {
 impl Domains {
     pub(super) fn new(max_rows: usize, max_bytes: usize) -> Self {
         Self {
+            configured_off: false,
             max_rows,
             max_bytes,
             used_rows: 0,
@@ -92,6 +94,11 @@ impl Domains {
         domains.deadline = Some(deadline);
         domains
     }
+    pub(super) fn configured_off_archive(mut self, configured_off: bool) -> Self {
+        self.configured_off = configured_off;
+        self
+    }
+
     fn check_time(&self) -> Result<(), SourceClosureError> {
         if self
             .deadline
@@ -158,6 +165,7 @@ impl Domains {
             } if RECEIPT_TABLES.contains(&table)
                 || [
                     "owner_beta_paper_control",
+                    "owner_beta_daily_control",
                     "owner_beta_paper_lineage",
                     "owner_beta_recommendation_runs",
                     "owner_beta_recommendation_items",
@@ -204,6 +212,9 @@ impl Domains {
                 || path.starts_with("paper_operations/")
                 || path == LIFECYCLE
                 || path.starts_with("paper_evidence/lifecycle/")
+                || (self.configured_off
+                    && (path.starts_with(lifecycle::ARCHIVED_CURRENT)
+                        || path.starts_with(lifecycle::ARCHIVED_CLAIM)))
                 || (path.starts_with("paper_evidence/source-")
                     && path.contains("/events/")
                     && file.is_some()) =>
@@ -213,17 +224,15 @@ impl Domains {
                 }
                 let record: Value = serde_json::from_slice(canonical_record)
                     .map_err(|_| SourceClosureError::Json)?;
+                let current = path.starts_with(lifecycle::ARCHIVED_CURRENT);
+                let claim = path.starts_with(lifecycle::ARCHIVED_CLAIM);
+                let source_event = path.starts_with("paper_evidence/source-");
                 if !fields(
                     &record,
                     &["path", "kind", "uid", "gid", "mode", "size", "sha256"],
                 ) || record["path"] != path
                     || record["uid"] != 0
-                    || record["gid"]
-                        != if path.starts_with("paper_evidence/source-") {
-                            10001
-                        } else {
-                            0
-                        }
+                    || record["gid"] != if source_event || current { 10001 } else { 0 }
                 {
                     return Err(SourceClosureError::Metadata);
                 }
@@ -234,9 +243,10 @@ impl Domains {
                 let directory = record["kind"] == "directory";
                 let mode = if directory {
                     0o700
-                } else if path.starts_with("paper_evidence/source-") {
+                } else if source_event || current {
                     0o440
-                } else if path == "paper_operations/installation-id"
+                } else if claim
+                    || path == "paper_operations/installation-id"
                     || path == "paper_operations/epoch-floor"
                 {
                     0o600
@@ -249,6 +259,8 @@ impl Domains {
                     || record["mode"] != mode
                     || directory != file.is_none()
                     || (directory && size != 0)
+                    || ((current || claim)
+                        && (directory || size > market_data::paper_source_evidence::SOURCE_LIMIT))
                     || size
                         > if path == LIFECYCLE || path.starts_with("paper_evidence/lifecycle/") {
                             if path.ends_with("/artifact.json")
@@ -1858,11 +1870,20 @@ fn process_shape(v: &Value) -> bool {
         })
 }
 impl Domains {
-    pub(super) fn finish_release(&self, _archive: &Value, _audit: &Value) -> Result<(), ErrorCode> {
+    pub(super) fn finish_release(&self, archive: &Value, _audit: &Value) -> Result<(), ErrorCode> {
+        let process_present = self
+            .release_members
+            .contains_key("paper_config/process.json");
+        if self
+            .release_members
+            .contains_key("paper_config/config.json")
+            != process_present
+            || (!process_present && archive["schema"] != wire::CONFIGURED_OFF_ARCHIVE_SCHEMA)
+        {
+            return Err(ErrorCode::EvidenceUnavailable);
+        }
         let expected = [
             "paper_config",
-            "paper_config/process.json",
-            "paper_config/config.json",
             "paper_contract",
             "paper_contract/financial-contract.md",
             "paper_contract/audit-projection.json",
@@ -1890,7 +1911,7 @@ impl Domains {
             "paper_reader/provenance/owner-beta-paper-ops-native/artifact.json",
             "paper_reader/provenance/owner-beta-paper-ops-native/COMPLETE",
         ];
-        if self.release_members.len() != expected.len()
+        if self.release_members.len() != expected.len() + 2 * usize::from(process_present)
             || expected
                 .iter()
                 .any(|p| !self.release_members.contains_key(*p))
@@ -1966,27 +1987,53 @@ impl Domains {
                 return Err(ErrorCode::IdentityConflict);
             }
         }
-        let process_raw = self.release_bytes("paper_config/process.json")?;
-        if process_raw != self.release_bytes("paper_config/config.json")? {
-            return Err(ErrorCode::IdentityConflict);
-        }
-        let process = wire::parse_canonical(process_raw).map_err(|_| ErrorCode::WireInvalid)?;
-        if self.release_hash("paper_contract/financial-contract.md")?
+        let financial_contract = self.release_hash("paper_contract/financial-contract.md")?;
+        if financial_contract
             != "sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0"
-            || !process_shape(&process)
-            || process["financial_contract_sha256"].as_str()
-                != Some(self.release_hash("paper_contract/financial-contract.md")?)
-            || [
-                "code_commit",
-                "release_manifest_sha256",
-                "api_binary_sha256",
-                "worker_binary_sha256",
-            ]
-            .iter()
-            .any(|k| process[*k] != cap[*k])
         {
             return Err(ErrorCode::IdentityConflict);
         }
+        let process_hash = if process_present {
+            let process_raw = self.release_bytes("paper_config/process.json")?;
+            if process_raw != self.release_bytes("paper_config/config.json")? {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let process = wire::parse_canonical(process_raw).map_err(|_| ErrorCode::WireInvalid)?;
+            if !process_shape(&process)
+                || process["financial_contract_sha256"].as_str() != Some(financial_contract)
+                || [
+                    "code_commit",
+                    "release_manifest_sha256",
+                    "api_binary_sha256",
+                    "worker_binary_sha256",
+                ]
+                .iter()
+                .any(|key| process[*key] != cap[*key])
+            {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            if archive["schema"] == wire::CONFIGURED_OFF_ARCHIVE_SCHEMA {
+                let (_, paper) = self.single_control("owner_beta_paper_control")?;
+                let epoch = paper["control_epoch"]
+                    .as_i64()
+                    .ok_or(ErrorCode::WireInvalid)?;
+                if [
+                    "owner_user_id",
+                    "account_id",
+                    "strategy_config_id",
+                    "consent_event_id",
+                ]
+                .iter()
+                .any(|key| process[*key] != paper[*key])
+                    || process["control_epoch"].as_i64() != epoch.checked_add(1)
+                {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+            }
+            Some(digest_bytes(process_raw))
+        } else {
+            None
+        };
         let mut digest_map = serde_json::Map::new();
         for (name, key) in RELEASE_PRODUCERS {
             let artifact =
@@ -2008,16 +2055,111 @@ impl Domains {
         let receipt =
             wire::parse_canonical(self.release_bytes("paper_reader/install-receipt.json")?)
                 .map_err(|_| ErrorCode::WireInvalid)?;
-        let expected_receipt = serde_json::json!({"schema":"owner-beta-paper-install-receipt-v1", "code_commit":commit, "release_manifest_sha256":cap["release_manifest_sha256"], "capability_sha256":digest_bytes(cap_raw), "audit_projection_sha256":self.release_hash("paper_contract/audit-projection.json")?, "process_sha256":digest_bytes(process_raw), "producer_receipts_sha256":digest_bytes(&digest_map)});
+        let expected_receipt = serde_json::json!({"schema":"owner-beta-paper-install-receipt-v1", "code_commit":commit, "release_manifest_sha256":cap["release_manifest_sha256"], "capability_sha256":digest_bytes(cap_raw), "audit_projection_sha256":self.release_hash("paper_contract/audit-projection.json")?, "process_sha256":process_hash, "producer_receipts_sha256":digest_bytes(&digest_map)});
         if receipt != expected_receipt {
             return Err(ErrorCode::IdentityConflict);
         }
-        self.historical_paper_originals(&process)
+        self.historical_paper_originals()
     }
 }
 
 impl Domains {
-    fn historical_paper_originals(&self, _installed_process: &Value) -> Result<(), ErrorCode> {
+    fn single_control(&self, name: &str) -> Result<(&[u8], Value), ErrorCode> {
+        let mut rows = self.rows.iter().filter(|((table, _), _)| table == name);
+        let ((_, key), raw) = rows.next().ok_or(ErrorCode::EvidenceUnavailable)?;
+        let row: Value = serde_json::from_slice(raw).map_err(|_| ErrorCode::WireInvalid)?;
+        if rows.next().is_some() || key != "etf11" || row["id"] != "etf11" {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        Ok((raw, row))
+    }
+
+    pub(super) fn verify_configured_off_source(
+        &self,
+        archive: &Value,
+        predecessor: &Value,
+    ) -> Result<(), SourceClosureError> {
+        self.check_configured_off_source(archive, predecessor)
+            .map_err(|_| SourceClosureError::Relationship)
+    }
+
+    fn check_configured_off_source(
+        &self,
+        archive: &Value,
+        predecessor: &Value,
+    ) -> Result<(), ErrorCode> {
+        let proof =
+            wire::configured_off_source_proof(archive).map_err(|_| ErrorCode::WireInvalid)?;
+        let (paper_raw, paper) = self.single_control("owner_beta_paper_control")?;
+        let (daily_raw, daily) = self.single_control("owner_beta_daily_control")?;
+        if paper["state"] != "OFF"
+            || paper["account_id"] != archive["account_id"]
+            || !uuid(&paper["owner_user_id"])
+            || daily["owner_user_id"] != paper["owner_user_id"]
+            || paper["control_epoch"] != archive["control_epoch"]
+            || !paper["control_epoch"]
+                .as_i64()
+                .is_some_and(|epoch| epoch >= 0)
+            || !daily["enabled"].is_boolean()
+            || !daily["activation_epoch"]
+                .as_i64()
+                .is_some_and(|epoch| epoch >= 0)
+            || [
+                "process_binding",
+                "process_binding_sha256",
+                "daily_cohort",
+                "cohort_sha256",
+                "activation_event_id",
+            ]
+            .iter()
+            .any(|key| paper.get(*key) != Some(&Value::Null))
+            || proof["paper_control_sha256"] != digest_bytes(paper_raw)
+            || proof["daily_control_sha256"] != digest_bytes(daily_raw)
+        {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        let mut latest = None;
+        for ((table, key), raw) in &self.rows {
+            if table != "owner_beta_paper_operations" {
+                continue;
+            }
+            self.check_time()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let operation: Value =
+                serde_json::from_slice(raw).map_err(|_| ErrorCode::WireInvalid)?;
+            if operation["account_id"] != paper["account_id"] {
+                continue;
+            }
+            let generation = operation["generation"]
+                .as_str()
+                .ok_or(ErrorCode::WireInvalid)?;
+            if !uuid(&operation["generation"])
+                || generation != key
+                || operation["generation"] == archive["generation"]
+            {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let created = operation["created_at"]
+                .as_str()
+                .ok_or(ErrorCode::WireInvalid)?;
+            let created = chrono::DateTime::parse_from_rfc3339(created)
+                .map_err(|_| ErrorCode::WireInvalid)?;
+            let epoch = operation["fence_epoch"]
+                .as_i64()
+                .ok_or(ErrorCode::WireInvalid)?;
+            let order = (created, epoch, generation.to_owned());
+            if latest.as_ref().is_none_or(|previous| order > *previous) {
+                latest = Some(order);
+            }
+        }
+        let actual = latest.map_or(Value::Null, |(_, _, generation)| Value::String(generation));
+        if &actual != predecessor {
+            return Err(ErrorCode::IdentityConflict);
+        }
+        self.finish_configured_off_witnesses(&paper, &daily)
+    }
+
+    fn historical_paper_originals(&self) -> Result<(), ErrorCode> {
         let mut budget = JournalIndex::new();
         let mut controls = BTreeMap::<String, Value>::new();
         let mut events = BTreeMap::<String, Value>::new();
@@ -6173,6 +6315,180 @@ mod tests {
         }
         domains
     }
+    fn configured_off_fixture(domains: &mut Domains, consent: bool) -> Value {
+        let account = "00000000-0000-4000-8000-000000000012";
+        let owner = "00000000-0000-4000-8000-000000000011";
+        let strategy = "00000000-0000-4000-8000-000000000013";
+        let consent_id = "00000000-0000-4000-8000-000000000014";
+        let contract = serde_json::json!({
+            "contract_id": "owner-beta-paper-v1-draft-1",
+            "contract_sha256": "sha256:18cde9fa7f15e19c9ec272abb780d06ae4be672068ed3f9208c39dc2297ab8d0",
+            "decision_sha256": "sha256:8ef602a35586d3e2ca532c5fbb5efc6f2e727eb25ebeb45a44dad0ea0d0ca394",
+            "cost_profile_id": "KRX_ETF_DEFAULT",
+            "cost_profile_version": 1,
+        });
+        let paper = serde_json::json!({
+            "id": "etf11", "owner_user_id": owner, "account_id": account,
+            "state": "OFF", "control_epoch": 0, "strategy_config_id": strategy,
+            "process_binding": null, "process_binding_sha256": null,
+            "daily_cohort": null, "cohort_sha256": null, "activation_event_id": null,
+            "consent_event_id": consent.then_some(consent_id), "contract_json": contract,
+            "contract_id": contract["contract_id"], "contract_sha256": contract["contract_sha256"],
+            "cost_profile_id": contract["cost_profile_id"], "cost_profile_version": 1,
+            "cost_profile_sha256": digest_bytes(b"KRX_ETF_DEFAULT@1|buy_commission=0.00015|sell_commission=0.00015|min_commission=1000.0000|slippage=10bp|min_trade=100000.0000|rebalance_threshold=0.005000|sell_tax=0.00000"),
+        });
+        let daily = serde_json::json!({
+            "id": "etf11", "owner_user_id": owner, "enabled": consent, "activation_epoch": 3,
+        });
+        let mut retain = |table: &str, key: &str, value: &Value| {
+            let bytes = crate::owner_beta::paper::source_evidence::canonical(value).unwrap();
+            let hash = digest_bytes(&bytes);
+            domains
+                .rows
+                .insert((table.to_owned(), key.to_owned()), bytes);
+            hash
+        };
+        let paper_hash = retain("owner_beta_paper_control", "etf11", &paper);
+        let daily_hash = retain("owner_beta_daily_control", "etf11", &daily);
+        let created_id = "00000000-0000-4000-8000-000000000015";
+        retain(
+            "owner_beta_paper_events",
+            created_id,
+            &serde_json::json!({
+                "id": created_id, "kind": "CONFIGURED", "account_id": account, "owner_user_id": owner,
+                "payload": {"schema": "owner-beta-paper-configured-v1", "contract": contract, "strategy_config_id": strategy},
+            }),
+        );
+        if consent {
+            retain(
+                "owner_beta_paper_events",
+                consent_id,
+                &serde_json::json!({
+                    "id": consent_id, "kind": "CONSENT_GRANTED", "account_id": account,
+                    "owner_user_id": owner, "actor_user_id": owner,
+                    "payload": {"schema": "owner-beta-paper-consent-v1", "consent_version": contract["contract_id"],
+                        "contract_sha256": contract["contract_sha256"], "opt_in": true},
+                }),
+            );
+        }
+        serde_json::json!({
+            "schema": wire::CONFIGURED_OFF_ARCHIVE_SCHEMA, "profile": wire::CONFIGURED_OFF_ARCHIVE_PROFILE,
+            "generation": "00000000-0000-4000-8000-000000000016", "account_id": account, "control_epoch": 0,
+            "source_proof": {"schema": wire::CONFIGURED_OFF_PROOF_SCHEMA,
+                "paper_control_sha256": paper_hash, "daily_control_sha256": daily_hash},
+        })
+    }
+
+    #[test]
+    fn configured_off_accepts_pristine_bootstrap_and_consented_observer_installation() {
+        let original = release_fixture();
+        let mut observed = consume_release(&original);
+        let proof = configured_off_fixture(&mut observed, true);
+        assert!(
+            observed
+                .verify_configured_off_source(&proof, &Value::Null)
+                .is_ok()
+        );
+        assert!(observed.finish_release(&proof, &Value::Null).is_ok());
+
+        let mut absent = original.clone();
+        absent.remove("paper_config/process.json");
+        absent.remove("paper_config/config.json");
+        let mut unsigned = consume_release(&absent);
+        let proof = configured_off_fixture(&mut unsigned, false);
+        assert!(unsigned.finish_release(&proof, &Value::Null).is_err());
+
+        let key = "paper_reader/install-receipt.json";
+        let mut receipt: Value = serde_json::from_slice(absent[key].as_ref().unwrap()).unwrap();
+        receipt["process_sha256"] = Value::Null;
+        *absent.get_mut(key).unwrap() =
+            Some(crate::owner_beta::paper::source_evidence::canonical(&receipt).unwrap());
+        let mut bootstrap = consume_release(&absent);
+        let proof = configured_off_fixture(&mut bootstrap, false);
+        assert!(
+            bootstrap
+                .verify_configured_off_source(&proof, &Value::Null)
+                .is_ok()
+        );
+        assert!(bootstrap.finish_release(&proof, &Value::Null).is_ok());
+        assert!(
+            bootstrap
+                .finish_release(&Value::Null, &Value::Null)
+                .is_err()
+        );
+
+        absent.insert(
+            "paper_config/process.json".into(),
+            original["paper_config/process.json"].clone(),
+        );
+        let mut unpaired = consume_release(&absent);
+        let proof = configured_off_fixture(&mut unpaired, false);
+        assert!(unpaired.finish_release(&proof, &Value::Null).is_err());
+
+        let mut mismatched = consume_release(&original);
+        let proof = configured_off_fixture(&mut mismatched, false);
+        assert!(mismatched.finish_release(&proof, &Value::Null).is_err());
+    }
+
+    #[test]
+    fn configured_off_requires_both_original_controls_and_separate_durable_predecessor() {
+        let mut domains = consume_release(&release_fixture());
+        let proof = configured_off_fixture(&mut domains, true);
+        let mut swapped = proof.clone();
+        swapped["source_proof"]["paper_control_sha256"] =
+            proof["source_proof"]["daily_control_sha256"].clone();
+        swapped["source_proof"]["daily_control_sha256"] =
+            proof["source_proof"]["paper_control_sha256"].clone();
+        assert!(
+            domains
+                .verify_configured_off_source(&swapped, &Value::Null)
+                .is_err()
+        );
+        assert!(
+            domains
+                .verify_configured_off_source(&proof, &proof["generation"])
+                .is_err()
+        );
+
+        let prior = serde_json::json!("00000000-0000-4000-8000-000000000017");
+        let row = serde_json::json!({
+            "generation": prior, "account_id": proof["account_id"], "fence_epoch": 0,
+            "created_at": "2026-11-23T00:00:00.000001Z",
+        });
+        domains.rows.insert(
+            (
+                "owner_beta_paper_operations".to_owned(),
+                prior.as_str().unwrap().to_owned(),
+            ),
+            crate::owner_beta::paper::source_evidence::canonical(&row).unwrap(),
+        );
+        assert!(
+            domains
+                .verify_configured_off_source(&proof, &Value::Null)
+                .is_err()
+        );
+        assert!(domains.verify_configured_off_source(&proof, &prior).is_ok());
+
+        let key = ("owner_beta_paper_control".to_owned(), "etf11".to_owned());
+        let original = domains.rows.remove(&key).unwrap();
+        assert!(
+            domains
+                .verify_configured_off_source(&proof, &prior)
+                .is_err()
+        );
+        let mut replaced: Value = serde_json::from_slice(&original).unwrap();
+        replaced["activation_event_id"] = prior.clone();
+        let raw = crate::owner_beta::paper::source_evidence::canonical(&replaced).unwrap();
+        let mut changed = proof;
+        changed["source_proof"]["paper_control_sha256"] = serde_json::json!(digest_bytes(&raw));
+        domains.rows.insert(key, raw);
+        assert!(
+            domains
+                .verify_configured_off_source(&changed, &prior)
+                .is_err()
+        );
+    }
+
     #[test]
     fn release_originals_accept_and_reject_alias_and_producer_mutations() {
         let original = release_fixture();

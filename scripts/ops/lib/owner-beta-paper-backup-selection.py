@@ -135,6 +135,10 @@ def _trusted_audit_owner(context, drained, operation, owner):
              and owner.generation == operation.generation,
              "PAPER_SELECTION_AUDIT_OWNER")
     owner.revalidate()
+    return owner, _audit_requirements(owner)
+
+
+def _audit_requirements(owner):
     requirements = owner._file_selection_requirements()
     _require(type(requirements) is tuple, "PAPER_SELECTION_AUDIT_REFERENCES")
     normalized, seen = [], set()
@@ -149,7 +153,17 @@ def _trusted_audit_owner(context, drained, operation, owner):
         _require(key not in seen, "PAPER_SELECTION_AUDIT_REFERENCES")
         seen.add(key)
         normalized.append(key)
-    return owner, tuple(normalized)
+    return tuple(normalized)
+
+
+def _configured_off_selection(context, held):
+    module = sys.modules.get("owner_beta_paper_backup")
+    _require(module is not None and type(held) is module._HeldConfiguredOffSnapshot
+             and held._token is module._CONFIGURED_OFF_SNAPSHOT and held.context is context
+             and module._OWNERS.get(held._custody) is held and held.source_proof is not None,
+             "PAPER_SELECTION_AUDIT_OWNER")
+    held.revalidate()
+    return held.ops, held.journal, held._custody.observer, _audit_requirements(held)
 
 
 def _paper_classes():
@@ -609,6 +623,20 @@ class _ExternalCurrent:
             self.fd = None
 
 
+def _retain_observed_current(class_fd, name, data):
+    """Copy historical Current into the private archive projection."""
+    _require(type(data) is bytes and 0 < len(data) <= 65_536, "PAPER_SELECTION_EVIDENCE_SIZE")
+    fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                 0o600, dir_fd=class_fd)
+    with os.fdopen(fd, "wb") as original:
+        original.write(data)
+        original.flush()
+        os.fchown(original.fileno(), 0, 10001)
+        os.fchmod(original.fileno(), 0o440)
+        os.fsync(original.fileno())
+    os.fsync(class_fd)
+
+
 def _construction_identity(info):
     # Creation can change nlink/size/timestamps. Retain the opened generation;
     # final full metadata is sealed once, after our exclusively owned writes.
@@ -798,8 +826,9 @@ class _SelectedPaperFiles:
         _require(not self._closed, "PAPER_SELECTION_CLOSED")
         self.held_audit.revalidate()
         self.context.revalidate()
-        self.operation.revalidate()
-        self.operation._journal.revalidate()
+        if self.operation is not None:
+            self.operation.revalidate()
+            self.operation._journal.revalidate()
         self.held_audit.revalidate()
         _require(self.held_audit._file_selection_requirements() == self._requirements,
                  "PAPER_SELECTION_AUDIT_CHANGED")
@@ -875,9 +904,13 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
     """
     _require(sys.platform == "linux" and os.geteuid() == 0,
              "PAPER_SELECTION_ROOT_REQUIRED")
-    operations, attempt, operation = _trusted_context(context, drained, held_audit)
-    held_audit, requirements = _trusted_audit_owner(
-        context, drained, operation, held_audit)
+    if drained is None:
+        operations, journal, observer, requirements = _configured_off_selection(context, held_audit)
+        operation = None
+    else:
+        operations, attempt, operation = _trusted_context(context, drained, held_audit)
+        held_audit, requirements = _trusted_audit_owner(context, drained, operation, held_audit)
+        journal, observer = operation._journal, attempt.observer
     backup = _backup_module()
     files = _file_module(limits, backup)
     roots = _current_roots(context, operations, backup, files)
@@ -902,6 +935,7 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
         release_path = verified.target_release
         stage_path = release_path + "/deploy/owner-beta-paper"
         daily = operations.daily.install
+        armed_sources = observer.armed_sources if operation is None else {}
 
         def original(path, uid, gid, mode, maximum):
             source = _OriginalFile(files, path, uid=uid, gid=gid,
@@ -911,10 +945,21 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
 
         # The process binding/config alias are validated by VerifiedPaperRelease;
         # no environment file, deployment tree or secret directory is copied.
-        for filename in ("process.json", "config.json"):
+        process_files = ("process.json", "config.json") if verified.process_sha256 is not None else ()
+        for filename in process_files:
             data = daily.read_file(stage_fd, filename, uid=0, gid=10001,
                                   mode=0o440, maximum=release.MAX_PROCESS)
             _require(data, "PAPER_SELECTION_PROCESS_REQUIRED")
+            if operation is None:
+                process = release._json(data, release.MAX_PROCESS)
+                paper = held_audit.source_paper
+                _require(all(process[field] == paper[field] for field in (
+                    "owner_user_id", "account_id", "strategy_config_id", "consent_event_id"))
+                    and process["control_epoch"] == held_audit.epoch + 1
+                    and all(armed.binding["cohort"]["cohort_sha256"] == process["daily_cohort_sha256"]
+                            for armed in armed_sources.values())
+                    and verified.process_sha256 == "sha256:" + hashlib.sha256(data).hexdigest(),
+                    "PAPER_SELECTION_PROCESS_CHANGED")
             src = original(stage_path + "/" + filename, 0, 10001, 0o440,
                            release.MAX_PROCESS)
             _require(src.sha256 == "sha256:" + hashlib.sha256(data).hexdigest(),
@@ -975,9 +1020,8 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
 
         # Source Current originals are evidence only. Observer-held collector
         # and control locks remain in the borrowed DrainedHandle, outside bundle.
-        observer = attempt.observer
         _require(observer is not None and type(observer.source_bindings) is list
-                 and observer.source_bindings and type(observer.locks) is list
+                 and (operation is None or observer.source_bindings) and type(observer.locks) is list
                  and any(type(item) is tuple and len(item) == 2 and item[0] == "manager"
                          for item in observer.locks),
                  "PAPER_SELECTION_EVIDENCE_REQUIRED")
@@ -985,11 +1029,26 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
             _require(type(entry) is tuple and len(entry) == 4,
                      "PAPER_SELECTION_EVIDENCE")
             source, binding, raw, path = entry
-            current = _ExternalCurrent(files, source, binding, raw, path)
-            currents.append(current)
-            src = original(current.path, 0, 10001, 0o440, 65_536)
-            _require(os.pread(src.fd, src.size+1, 0) == current.data, "PAPER_SELECTION_EVIDENCE_CHANGED")
-            src.copy_to(files, class_fds["paper_evidence"], "current-%04d.json" % index)
+            armed = armed_sources.get(path)
+            if armed is None:
+                current = _ExternalCurrent(files, source, binding, raw, path)
+                currents.append(current)
+                src = original(current.path, 0, 10001, 0o440, 65_536)
+                _require(os.pread(src.fd, src.size+1, 0) == current.data, "PAPER_SELECTION_EVIDENCE_CHANGED")
+                src.copy_to(files, class_fds["paper_evidence"], "current-%04d.json" % index)
+            else:
+                _require(verified.process_sha256 is not None and
+                         held_audit.source_paper["owner_user_id"] == binding["cohort"]["owner_user_id"],
+                         "PAPER_SELECTION_EVIDENCE")
+                armed.revalidate()
+                # A heartbeat can legitimately replace the live Current name.
+                # Preserve one authenticated historical snapshot in this archive
+                # only; no clone will publish it under a live authority mount.
+                _retain_observed_current(class_fds["paper_evidence"],
+                                         "current-%04d.json" % index, armed.current_original)
+                claim = original(str(armed.claim_path), 0, 0, 0o600, 65_536)
+                _require(os.pread(claim.fd, claim.size+1, 0) == armed.claim, "PAPER_SELECTION_EVIDENCE_CHANGED")
+                claim.copy_to(files, class_fds["paper_evidence"], "claim-%04d.json" % index)
             _source_events(files, source, binding, class_fds["paper_evidence"],
                            "source-%04d" % index, sources, limits.entries)
 
@@ -998,7 +1057,6 @@ def _open_selected_paper_files(context, drained, held_audit, limits):
 
         # Direct roots retain the actual installed operation history, floor,
         # release manifest and the existing Daily/Raw/Curated histories.
-        journal = operation._journal
         journal.revalidate()
         root_info = files.checked(journal._root, directory=True, owners={0}, groups={0})
         _require((root_info.st_uid, root_info.st_gid, stat.S_IMODE(root_info.st_mode)) ==

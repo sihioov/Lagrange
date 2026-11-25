@@ -31,6 +31,10 @@ import weakref
 from pathlib import Path
 
 
+# Linux asm-generic/fcntl.h exposes this even when a Python build omits the name.
+_OFF_ARCHIVE_OFD_GETLK = getattr(fcntl, "F_OFD_GETLK", 36) if sys.platform == "linux" else None
+
+
 def _load_local(name, filename):
     path = Path(__file__).with_name(filename)
     spec = importlib.util.spec_from_file_location(name, path)
@@ -1527,6 +1531,8 @@ class _NativeInvocation:
         _write_file(stage.fd, "database.json", _canonical(package.database), 0o400)
         _require(context.verified is not None, "PAPER_OPS_RELEASE")
         context.verified.stage_native_inputs(stage.fd)
+        if destination is not None:
+            destination.copy_configured_off_helper(stage.fd, self.verb, self.custody)
         for alias in ("operation", "paper-state", "archive"):
             os.mkdir(alias, 0o700, dir_fd=stage.fd)
         _ensure_output_mountpoint(stage.fd)
@@ -2468,7 +2474,11 @@ class _ObservationOriginals:
 class _HostStopObserver:
     """Source-owned Linux/Docker/systemd/PG observer. No injected attestations."""
     def __init__(self, attempt):
-        self.attempt, self.context, self.deadline = attempt, attempt.context, attempt.deadline
+        self.attempt = attempt
+        self._initialize(attempt.context, attempt.deadline)
+
+    def _initialize(self, context, deadline):
+        self.context, self.deadline = context, deadline
         self.containers, self.units, self.processes = {}, {}, {}
         self.pidfds, self.locks, self.source_bindings = {}, [], []
         self.cgroup_fds = {}
@@ -3004,6 +3014,26 @@ class _HostStopObserver:
         self.database_process = process
         return server, role
 
+    def _database_binding_sql(self):
+        control = self.attempt.operation._intent
+        account, generation = control["account_id"], control["generation"]
+        journal._uuid(account); journal._uuid(generation)
+        return ("(SELECT json_build_object('epoch',c.control_epoch,'state',c.state,"
+            "'event',o.fence_event_id,'generation',o.generation) "
+            "FROM public.owner_beta_paper_control c CROSS JOIN public.owner_beta_paper_operations o "
+            "WHERE c.account_id='" + account + "'::uuid AND o.generation='" + generation +
+            "'::uuid AND o.account_id=c.account_id AND o.fence_epoch=" + str(self.attempt.fence) + " "
+            "AND o.installation_id='" + control["installation_id"] + "'::uuid "
+            "AND o.release_manifest_sha256='" + self.context.manifest_sha256 +
+            "' AND o.intent_sha256='" + self.attempt.operation.intent_sha256 + "')")
+
+    def _check_database_binding(self, binding):
+        committed = getattr(self.attempt, "consumer", None)
+        epoch, state = ((self.attempt.fence, "DRAINING") if committed is None
+                        else committed.database_state())
+        _require(binding == {"epoch": epoch, "state": state, "event": self.attempt.event,
+                  "generation": self.attempt.operation._intent["generation"]}, "PAPER_OPS_FENCE_CHANGED")
+
     def database(self, action):
         """Fixed privileged LOCAL socket transport, never serving credentials.
 
@@ -3016,9 +3046,6 @@ class _HostStopObserver:
         self.context.revalidate()
         server, role = self.database_principal()
         pid, process = server["State"]["Pid"], self.database_process
-        control = self.attempt.operation._intent
-        account, generation = control["account_id"], control["generation"]
-        journal._uuid(account); journal._uuid(generation)
         signal_sql = ""
         if action != "observe":
             ids = [(row["pid"], row["start_us"]) for row in self.backends]
@@ -3047,14 +3074,7 @@ class _HostStopObserver:
             (",'app',application_name" if self._ROW_APP else "") + ") ORDER BY pid), '[]'::json) "
             "FROM pg_catalog.pg_stat_activity WHERE datname=current_database() "
             "AND backend_type='client backend' AND pid<>pg_backend_pid()),"
-            "'fence',(SELECT json_build_object('epoch',c.control_epoch,'state',c.state,"
-            "'event',o.fence_event_id,'generation',o.generation) "
-            "FROM public.owner_beta_paper_control c CROSS JOIN public.owner_beta_paper_operations o "
-            "WHERE c.account_id='" + account + "'::uuid AND o.generation='" + generation +
-            "'::uuid AND o.account_id=c.account_id AND o.fence_epoch=" + str(self.attempt.fence) + " "
-            "AND o.installation_id='" + control["installation_id"] + "'::uuid "
-            "AND o.release_manifest_sha256='" + self.context.manifest_sha256 +
-            "' AND o.intent_sha256='" + self.attempt.operation.intent_sha256 + "'));\nCOMMIT;\n")
+            "'fence'," + self._database_binding_sql() + ");\nCOMMIT;\n")
         output = self.command(["/usr/bin/docker", "--host", "unix:///var/run/docker.sock",
             "exec", "--interactive", "--user", "999:999", server["Id"],
             "psql", "-X", "-qAt", "-h", "/var/run/postgresql", "-U", role,
@@ -3077,11 +3097,7 @@ class _HostStopObserver:
         _require(type(value["prepared"]) is int and value["prepared"] == 0
                  and type(value["unexpected"]) is int and value["unexpected"] == 0,
                  "PAPER_OPS_PREPARED_UNKNOWN")
-        committed = getattr(self.attempt, "consumer", None)
-        epoch, state = ((self.attempt.fence, "DRAINING") if committed is None
-                        else committed.database_state())
-        _require(value["fence"] == {"epoch": epoch, "state": state,
-                  "event": self.attempt.event, "generation": generation}, "PAPER_OPS_FENCE_CHANGED")
+        self._check_database_binding(value["fence"])
         _require(type(value["backends"]) is list and len(value["backends"]) <= _STOP_BACKEND_LIMIT,
                  "PAPER_OPS_BACKEND_UNKNOWN")
         seen = set()
@@ -4232,6 +4248,284 @@ class _ArchiveObserver(_HostStopObserver):
 
     def close(self):
         _fail("PAPER_OPS_BORROWED_LOCKS")
+
+
+class _ArmedSourceArchive:
+    """Borrow the original witness's quiet interval without revoking its Current."""
+
+    def __init__(self, deadline, source, binding, pid, cgroup, lock_fd):
+        self.deadline, self.source, self.binding, self.lock_fd = deadline, source, binding, lock_fd
+        self.root = Path(binding["evidence_root"])
+        self.lock_id = _identity(os.fstat(lock_fd))
+        self.process = _process_record(pid)
+        _require(self.process["cgroup"] == cgroup, "PAPER_OPS_ARCHIVE_WRITER")
+        self.publisher = source.process(pid)
+        self.boot = _current_boot_id()
+        self.current = None
+        self.session = self._calendar_session()
+        self.claim, self.armed = self._armed_evidence()
+        self.current_original = self.revalidate()
+
+    def _calendar_session(self):
+        source, binding = self.source, self.binding
+        raw = source.read_file(binding["calendar_file"], 16 * 1024 * 1024)
+        _require(_digest(raw) == binding["cohort"]["calendar_sha256"], "PAPER_OPS_SOURCE_CALENDAR")
+        try:
+            artifact = json.loads(raw, object_pairs_hook=_pairs)
+        except (ValueError, UnicodeError, TypeError, RecursionError):
+            _fail("PAPER_OPS_SOURCE_CALENDAR")
+        _require(type(artifact) is dict and artifact.get("calendar_id") == "xkrx-historical-session-dates"
+                 and artifact["timezone"] == "Asia/Seoul" and type(artifact["sessions"]) is list
+                 and len(artifact["sessions"]) <= 16_384, "PAPER_OPS_SOURCE_CALENDAR")
+        now = time.time_ns()
+        candidates = [row["date"] for row in artifact["sessions"] if source.due_ns(row["date"]) >= now + 60 * 10**9]
+        _require(candidates, "PAPER_OPS_SOURCE_CALENDAR")
+        session = min(candidates)
+        horizon = int(self.deadline.remaining(920) * 10**9)
+        _require(source.due_ns(session) >= now + horizon + 60 * 10**9,
+                 "PAPER_OPS_SOURCE_RUNWAY")
+        return session
+
+    def _armed_evidence(self):
+        s, b = self.source, self.binding
+        slot = self.root / "events" / s.slot_id(b["cohort"], self.session)[7:]
+        names = ["%06d.json" % index for index in range(3)]
+        with s.opened(slot, directory=True, exact=(0, 10001, 0o750)) as fd:
+            with os.scandir(fd) as entries:
+                _require(sorted(entry.name for entry in itertools.islice(entries, 4)) == names,
+                         "PAPER_OPS_SOURCE_NOT_ARMED")
+            raw = tuple(s.read_file(slot / name, s.SOURCE_LIMIT, exact=(0, 10001, 0o440)) for name in names)
+        events = [s.decode(row) for row in raw]
+        tail = events[-1]
+        s.verify_chain(events, "ARMED")
+        _require(tail["arm"]["boot_id"] == self.boot and tail["arm"]["parent"] == self.publisher
+                 and tail["cohort"] == b["cohort"] and tail["session"] == self.session,
+                 "PAPER_OPS_SOURCE_NOT_ARMED")
+        self.claim_path = self.root / ".control" / (s.dispatch_key(b["cohort"], self.session) + ".json")
+        claim = s.read_file(self.claim_path, s.SOURCE_LIMIT, exact=(0, 0, 0o600))
+        original = {key: tail[key] for key in ("schema", "slot_id", "session", "due_realtime_ns",
+                    "cohort", "arm", "reservation_id", "invocation_id")}
+        _require(claim == s.canonical(original), "PAPER_OPS_SOURCE_CLAIM")
+        return claim, raw
+
+    def _sample_current(self):
+        s = self.source
+        path = self.root / "current" / s.CURRENT_LEAF
+        # The genuine daemon atomically refreshes this inode without acquiring
+        # the archive gate. Only the filesystem sampling race is retryable.
+        for attempt in range(3):
+            try:
+                with s.opened(path, exact=(0, 10001, 0o440)) as fd:
+                    raw = os.pread(fd, s.SOURCE_LIMIT + 1, 0)
+                    probe = s.OfdFlock(fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+                    _require(_OFF_ARCHIVE_OFD_GETLK is not None, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+                    result = s.OfdFlock.from_buffer_copy(fcntl.fcntl(fd, _OFF_ARCHIVE_OFD_GETLK, bytes(probe)))
+                break
+            except s.Rejected:
+                if attempt == 2:
+                    raise
+                time.sleep(self.deadline.remaining(0.03))
+        value = s.decode(raw, s.SOURCE_LIMIT)
+        s.validate_current(value)
+        now = s.sample()
+        lag = now["monotonic_ns"] - value["observed"]["monotonic_ns"]
+        _require(result.type == fcntl.F_WRLCK and result.pid == -1 and value["status"] == "CURRENT"
+                 and value["boot_id"] == self.boot and value["publisher"] == self.publisher
+                 and value["binding"] == self.binding and 0 <= lag <= 30 * 10**9,
+                 "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+        s.clock_step(value["observed"], now)
+        _require(self.current is None or (value["generation"] == self.current["generation"]
+                 and value["sequence"] >= self.current["sequence"]
+                 and (value["sequence"] > self.current["sequence"] or value == self.current)),
+                 "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+        self.current = value
+        return raw
+
+    def revalidate(self):
+        self.deadline.work_remaining()
+        with self.source.opened(self.root / ".control" / self.source.ARCHIVE_LOCK_LEAF,
+                                write=True, exact=(0, 0, 0o600)) as fd:
+            _require(_identity(os.fstat(fd)) == _identity(os.fstat(self.lock_fd)) == self.lock_id,
+                     "PAPER_OPS_SOURCE_LOCK_CHANGED")
+        fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        pid = self.process["pid"]
+        _require(_process_record(pid) == self.process and _current_boot_id() == self.boot
+                 and not Path("/proc", str(pid), "task", str(pid), "children").read_text().strip(),
+                 "PAPER_OPS_ARCHIVE_WRITER")
+        _require(self._calendar_session() == self.session and self._armed_evidence() == (self.claim, self.armed),
+                 "PAPER_OPS_SOURCE_CLAIM")
+        return self._sample_current()
+
+
+class _ConfiguredOffObserver(_HostStopObserver):
+    """Check the original OFF controls without creating a live operation."""
+
+    _ROW_APP = True
+
+    def __init__(self, context, deadline, account, epoch, daily_state):
+        _require(type(context) is _PaperContext and context._mode == "live"
+                 and type(deadline) is _ArchiveDeadline, "PAPER_OPS_PRIVATE")
+        journal._uuid(account)
+        journal._counter(epoch)
+        _require(type(daily_state) is tuple and len(daily_state) == 2
+                 and type(daily_state[0]) is bool, "PAPER_OPS_ARCHIVE_OFF")
+        journal._counter(daily_state[1])
+        self._initialize(context, deadline)
+        self.account, self.epoch, self.daily_state = account, epoch, daily_state
+        self.binding = None
+        self.publication_lease = None
+        self.armed_sources = {}
+        self.source_observation = None
+
+    def _database_binding_sql(self):
+        return ("(SELECT json_build_object('epoch',p.control_epoch,'enabled',d.enabled,"
+            "'daily_epoch',d.activation_epoch,'owner',p.owner_user_id,"
+            "'paper',public.daily_0060_digest(public.paper_0068_canonical_row_json(to_jsonb(p) || "
+            "jsonb_build_object('updated_at',to_char(p.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')))),"
+            "'daily',public.daily_0060_digest(public.paper_0068_canonical_row_json(to_jsonb(d) || "
+            "jsonb_build_object('updated_at',to_char(d.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'))))) "
+            "FROM public.owner_beta_paper_control p JOIN public.owner_beta_daily_control d "
+            "ON p.owner_user_id=d.owner_user_id AND d.id='etf11' WHERE p.id='etf11' AND "
+            "p.account_id='" + self.account + "'::uuid AND p.state='OFF' "
+            "AND p.activation_event_id IS NULL AND p.process_binding IS NULL "
+            "AND p.process_binding_sha256 IS NULL AND p.cohort_sha256 IS NULL "
+            "AND p.daily_cohort IS NULL)")
+
+    def _check_database_binding(self, binding):
+        _require(type(binding) is dict and set(binding) == {
+            "epoch", "enabled", "daily_epoch", "owner", "paper", "daily"}
+            and (binding["enabled"], binding["daily_epoch"]) == self.daily_state
+            and binding["epoch"] == self.epoch, "PAPER_OPS_ARCHIVE_OFF")
+        journal._uuid(binding["owner"])
+        journal._hash(binding["paper"])
+        journal._hash(binding["daily"])
+        _require(self.binding is None or self.binding == binding, "PAPER_OPS_ARCHIVE_CHANGED")
+        if self.binding is None:
+            self.binding = binding
+
+    def database(self, action):
+        _require(action == "observe", "PAPER_OPS_DATABASE")
+        return super().database(action)
+
+    def proof(self):
+        _require(self.binding is not None, "PAPER_OPS_ARCHIVE_OFF")
+        return {"schema": "owner-beta-paper-configured-off-source-v1",
+                "paper_control_sha256": self.binding["paper"], "daily_control_sha256": self.binding["daily"]}
+
+    def source_units(self):
+        units = self.units_now()
+        paper = units.get("paper-runner.service")
+        _require(paper is None or paper["pid"] == 0 and paper["active"] == "inactive",
+                 "PAPER_OPS_ARCHIVE_WRITER")
+        writers = [unit for unit in units.values() if "source_binding" in unit]
+        _require(len(writers) <= 1 and all(
+            unit["pid"] == 0 and unit["active"] == "inactive"
+            or unit["pid"] > 1 and unit["active"] == "active" and unit["sub"] == "running"
+            for unit in writers), "PAPER_OPS_ARCHIVE_WRITER")
+        return writers
+
+    def blocked_paper_scheduler(self):
+        d = self.context.docker
+        ids = d.call(["ps", "--all", "--no-trunc", "--filter",
+            "label=com.docker.compose.service=paper-scheduler", "--format", "{{.ID}}"]).splitlines()
+        _require(len(ids) <= 1 and all(runtime.CONTAINER.fullmatch(cid) for cid in ids),
+                 "PAPER_OPS_ARCHIVE_WRITER")
+        for cid in ids:
+            value = d.object("container", cid)
+            labels = value.get("Config", {}).get("Labels") or {}
+            _require(value.get("Image") == self.context.images["paper-scheduler"]
+                     and labels.get("com.docker.compose.project") == self.context.project
+                     and labels.get("com.docker.compose.oneoff") == "False"
+                     and labels.get("org.opencontainers.image.revision") == self.context.commit
+                     and not any(cid in group for group in _proc_cgroups().values()),
+                     "PAPER_OPS_ARCHIVE_WRITER")
+            _terminal_container(value, _container_generation(value))
+
+    def observe_source_phase(self):
+        _require(self.source_observation is None, "PAPER_OPS_PRIVATE")
+        self.blocked_paper_scheduler()
+        self.source_observation = self.source_units()
+        self.scheduler_observation = self.other_launch_sources()
+        source = _load_local("paper_stop_source", "owner-beta-paper-evidence.py")
+        for unit in self.source_observation:
+            path = unit["source_binding"]
+            selected, raw = source.binding(path)
+            self._check_source_unit(source, selected, path, unit)
+            self.source_bindings.append((source, selected, raw, path))
+            self.collector_locks.add(selected["lock_file"])
+            if unit["active"] == "active":
+                manager = source.opened(Path(selected["evidence_root"]) / ".control" / source.ARCHIVE_LOCK_LEAF,
+                                        write=True, exact=(0, 0, 0o600))
+                fd = manager.__enter__()
+                self.locks.append(("manager", manager))
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    _fail("PAPER_OPS_SOURCE_NOT_ARMED")
+                self.armed_sources[path] = _ArmedSourceArchive(
+                    self.deadline, source, selected, unit["pid"], unit["cgroup"], fd)
+
+    def enter_publication_locks(self, backup, binding, config):
+        _require(self.publication_lease is None and binding.data_root == self.context.values["LAGRANGE_DATA_DIR"],
+                 "PAPER_OPS_ARCHIVE_OFF")
+        self.observe_source_phase()
+        for path in sorted(self.collector_locks):
+            self.acquire_lock(path, 0, 0, 0o600)
+        for source, selected, raw, path in self.source_bindings:
+            _require(source.binding(path) == (selected, raw), "PAPER_OPS_LAUNCH_CHANGED")
+            if path in self.armed_sources:
+                continue
+            self.acquire_lock(str(Path(selected["evidence_root"]) / ".control/lock"), 0, 0, 0o600)
+            current = Path(selected["evidence_root"]) / "current" / source.CURRENT_LEAF
+            with source.opened(current, exact=(0, 10001, 0o440)) as fd:
+                value = source.decode(os.pread(fd, 65_537, 0), 65_536)
+                source.validate_current(value)
+                _require(value.get("status") == "INVALID", "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+                probe = source.OfdFlock(fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+                _require(_OFF_ARCHIVE_OFD_GETLK is not None, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+                result = source.OfdFlock.from_buffer_copy(fcntl.fcntl(fd, _OFF_ARCHIVE_OFD_GETLK, bytes(probe)))
+                _require(result.type == fcntl.F_UNLCK, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN")
+        manager = backup.publication_fence(binding, config)
+        self.publication_lease = manager.__enter__()
+        self.locks.append(("manager", manager))
+        self.check_publication_locks()
+
+    def _check_source_unit(self, source, binding, path, unit):
+        rendered = source.render_service(binding, path, binding["state_dir"], binding["lock_file"]).encode("utf-8")
+        originals = unit["originals"]
+        _require(binding["release_root"] == self.context.release_path and binding["project"] == self.context.project
+                 and binding["data_root"] == self.context.values["LAGRANGE_DATA_DIR"]
+                 and len(originals) == 1 and originals[0]["path"] == "/etc/systemd/system/" + unit["name"]
+                 and originals[0]["sha256"] == _digest(rendered), "PAPER_OPS_LAUNCH_UNKNOWN")
+
+    def check_publication_locks(self):
+        _require(self.publication_lease is not None, "PAPER_OPS_ARCHIVE_OFF")
+        self.publication_lease.check()
+        self.revalidate_source_phase()
+
+    def revalidate_source_phase(self):
+        _require(self.source_units() == self.source_observation
+                 and self.other_launch_sources() == self.scheduler_observation,
+                 "PAPER_OPS_LAUNCH_CHANGED")
+        self.blocked_paper_scheduler()
+        for source, binding, raw, path in self.source_bindings:
+            _require(source.binding(path) == (binding, raw), "PAPER_OPS_LAUNCH_CHANGED")
+        for armed in self.armed_sources.values():
+            armed.revalidate()
+
+    def origin_sha256(self):
+        self.revalidate_source_phase()
+        sources = []
+        for unit in self.source_observation:
+            path = unit["source_binding"]
+            armed = self.armed_sources.get(path)
+            record = {"unit_sha256": unit["identity"], "active": armed is not None}
+            if armed is not None:
+                record.update(boot_id=armed.boot, publisher=armed.publisher, claim_sha256=_digest(armed.claim),
+                              current_generation=armed.current["generation"],
+                              armed_sha256=_digest(armed.armed[-1]))
+            sources.append(record)
+        return _digest(_canonical({"controls": self.proof(), "sources": sources}))
 
 
 class _ArchiveCustody:

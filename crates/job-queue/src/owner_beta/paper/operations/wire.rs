@@ -108,6 +108,12 @@ const DRAIN_KEYS: &[&str] = &[
     "boot_id",
     "observed",
 ];
+pub(super) const CONFIGURED_OFF_ARCHIVE_SCHEMA: &str = "owner-beta-paper-archive-v2";
+pub(super) const CONFIGURED_OFF_ARCHIVE_PROFILE: &str = "paper-combined-configured-off";
+pub(super) const CONFIGURED_OFF_PROOF_SCHEMA: &str = "owner-beta-paper-configured-off-source-v1";
+pub(super) const CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA: &str =
+    "owner-beta-paper-restore-receipt-v2";
+
 const RESTORE_KEYS: &[&str] = &[
     "schema",
     "installation_id",
@@ -1129,6 +1135,55 @@ fn validate_transition(transition: &str, value: &Value) -> Result<(), ()> {
     validate_transition_mode(transition, value, None)
 }
 
+fn validate_restore_receipt_shape(value: &Value, allow_configured_off: bool) -> Result<(), ()> {
+    match text(value, "schema")? {
+        "owner-beta-paper-restore-receipt-v1" => exact_keys(value, RESTORE_KEYS),
+        CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA if allow_configured_off => {
+            let object = value.as_object().ok_or(())?;
+            if object.len() != RESTORE_KEYS.len() + 1
+                || RESTORE_KEYS.iter().any(|key| !object.contains_key(*key))
+                || text(value, "scope")? != "COMBINED_BACKUP"
+                || !digest(text(value, "source_proof_sha256")?)
+            {
+                return Err(());
+            }
+            Ok(())
+        }
+        _ => Err(()),
+    }
+}
+
+pub(super) fn configured_off_archive(value: &Value) -> Result<bool, ()> {
+    match (text(value, "schema")?, text(value, "profile")?) {
+        ("owner-beta-paper-archive-v1", "paper-combined") => Ok(false),
+        (CONFIGURED_OFF_ARCHIVE_SCHEMA, CONFIGURED_OFF_ARCHIVE_PROFILE) => {
+            configured_off_source_proof(value)?;
+            Ok(true)
+        }
+        _ => Err(()),
+    }
+}
+
+pub(super) fn configured_off_source_proof(value: &Value) -> Result<&Value, ()> {
+    if text(value, "schema")? != CONFIGURED_OFF_ARCHIVE_SCHEMA
+        || text(value, "profile")? != CONFIGURED_OFF_ARCHIVE_PROFILE
+    {
+        return Err(());
+    }
+    let proof = value.get("source_proof").ok_or(())?;
+    exact_keys(
+        proof,
+        &["schema", "paper_control_sha256", "daily_control_sha256"],
+    )?;
+    if text(proof, "schema")? != CONFIGURED_OFF_PROOF_SCHEMA
+        || !digest(text(proof, "paper_control_sha256")?)
+        || !digest(text(proof, "daily_control_sha256")?)
+    {
+        return Err(());
+    }
+    Ok(proof)
+}
+
 fn validate_transition_mode(
     transition: &str,
     value: &Value,
@@ -1183,21 +1238,15 @@ fn validate_transition_mode(
             }
         }
         "OFF" | "RESTORED_OFF" => {
-            exact_keys(
-                value,
-                if transition == "OFF" {
-                    DRAIN_KEYS
-                } else {
-                    RESTORE_KEYS
-                },
-            )?;
-            if text(value, "schema")?
-                != if transition == "OFF" {
-                    "owner-beta-paper-drain-receipt-v1"
-                } else {
-                    "owner-beta-paper-restore-receipt-v1"
+            if transition == "OFF" {
+                exact_keys(value, DRAIN_KEYS)?;
+                if text(value, "schema")? != "owner-beta-paper-drain-receipt-v1" {
+                    return Err(());
                 }
-                || !["PAPER_STOP", "COMBINED_BACKUP"].contains(&text(value, "scope")?)
+            } else {
+                validate_restore_receipt_shape(value, bound_root.is_some())?;
+            }
+            if !["PAPER_STOP", "COMBINED_BACKUP"].contains(&text(value, "scope")?)
                 || if let Some(root) = bound_root {
                     if i64_value(value, "expected_epoch")? != root.intent.expected_epoch {
                         return Err(());

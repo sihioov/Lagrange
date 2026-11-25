@@ -85,7 +85,6 @@ pub(in super::super) fn parse_root_intent(bytes: &[u8]) -> Result<RootIntent, ()
         || (matches!(purpose, "STOP" | "BACKUP") && artifact.is_some())
         || (matches!(purpose, "CONFIGURE" | "ENABLE" | "RECOVERY" | "RESTORE")
             && artifact.is_none())
-        || (purpose == "RESTORE" && predecessor.is_none())
     {
         return Err(());
     }
@@ -285,11 +284,16 @@ pub(in super::super) fn parse_bound_artifact(
             }
             if action.verb == Verb::RestoreOff {
                 let source_epoch = i64_value(&value, "source_epoch")?;
+                let source_matches = if value["schema"] == CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA {
+                    source_epoch == r.expected_epoch && source_epoch <= r.local_epoch_floor
+                } else {
+                    value["source_generation"] == r.value["predecessor_generation"]
+                        && source_epoch.checked_add(1).ok_or(())? <= r.local_epoch_floor
+                };
                 if text(&value, "source_installation_id")? == r.installation_id.to_string()
-                    || value["source_generation"] != r.value["predecessor_generation"]
+                    || !source_matches
                     || value["archive_sha256"] != r.value["artifact_sha256"]
                     || i64_value(&value, "destination_epoch_floor")? != r.local_epoch_floor
-                    || source_epoch.checked_add(1).ok_or(())? > r.local_epoch_floor
                     || value["source_audit_sha256"] != value["restored_audit_sha256"]
                 {
                     return Err(());

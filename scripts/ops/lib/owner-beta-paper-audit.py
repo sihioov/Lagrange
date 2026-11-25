@@ -191,11 +191,12 @@ def _row(table, key, row, a):
     _receipt(row)
 
 
-def decode(stream, reference_sink=None):
+def decode(stream, reference_sink=None, *, control_sink=None):
     """Read binary LF lines; optionally pass each reference to a protected consumer.
 
     The callback is provisional until this function AND transport/transaction
     completion succeed. No reference list or full history is retained in memory.
+    A configured-OFF caller may also retain the two audited control rows.
     """
     raw_projection = PROJECTION.read_bytes()
     a = json.loads(raw_projection)["archive_audit_v1"]
@@ -277,6 +278,49 @@ def decode(stream, reference_sink=None):
 
 # The expected rows are captured from the destination's committed exact
 # readbacks, not wildcard exclusions. This comparator returns no authority.
+
+def decode_configured_off_source(stream, account_id, control_epoch):
+    """Bind the two exact origin controls from one complete protected audit."""
+    controls = {}
+    latest = None
+
+    def retain(table, key, row):
+        nonlocal latest
+        if table in ("owner_beta_paper_control", "owner_beta_daily_control"):
+            require(key == "etf11" and table not in controls, "CONFIGURED_OFF_CONTROL")
+            controls[table] = row
+        if table == "owner_beta_paper_operations":
+            require(row["account_id"] == account_id and row["generation"] == key
+                    and type(row["created_at"]) is str and type(row["fence_epoch"]) is Decimal,
+                    "CONFIGURED_OFF_OPERATION")
+            rank = (row["created_at"], row["fence_epoch"], key)
+            latest = rank if latest is None else max(latest, rank)
+
+    description = decode(stream, reference_sink=retain)
+    require(set(controls) == {"owner_beta_paper_control", "owner_beta_daily_control"},
+            "CONFIGURED_OFF_CONTROL")
+    paper = controls["owner_beta_paper_control"]
+    daily = controls["owner_beta_daily_control"]
+    require(type(account_id) is str and paper["account_id"] == account_id
+            and paper["control_epoch"] == control_epoch
+            and type(control_epoch) is int and 0 <= control_epoch < I64 - 1
+            and paper["state"] == "OFF"
+            and type(paper["owner_user_id"]) is str
+            and paper["owner_user_id"] == daily["owner_user_id"]
+            and type(daily["enabled"]) is bool and daily["activation_epoch"] is not None
+            and daily["activation_epoch"] >= 0
+            and all(paper[key] is None for key in (
+                "activation_event_id", "process_binding", "process_binding_sha256",
+                "cohort_sha256", "daily_cohort")),
+            "CONFIGURED_OFF_CONTROL")
+    proof = {
+        "schema": "owner-beta-paper-configured-off-source-v1",
+        "paper_control_sha256": digest(canonical(paper)),
+        "daily_control_sha256": digest(canonical(daily)),
+    }
+    return description, proof, (None if latest is None else latest[2]), {"paper": paper, "daily": daily}
+
+
 _RESTORE_INSERTS = frozenset(("owner_beta_paper_operations", "owner_beta_paper_events",
                              "owner_beta_paper_operation_observations"))
 _RESTORE_UPDATES = {
@@ -287,11 +331,14 @@ _RESTORE_UPDATES = {
 
 
 def _restore_changes(expected):
-    require(type(expected) is dict and set(expected) == {
-        "generation", "installation_id", "account_id", "source_generation", "source_installation_id",
-        "source_epoch", "source_control_epoch", "expected_epoch", "destination_epoch_floor",
-        "fence_epoch", "restore_epoch", "archive_sha256", "source_audit_sha256", "receipts", "rows"}, "RESTORE_EXPECTED")
+    keys = {"generation", "installation_id", "account_id", "source_generation", "source_installation_id",
+            "source_epoch", "source_control_epoch", "expected_epoch", "destination_epoch_floor",
+            "fence_epoch", "restore_epoch", "archive_sha256", "source_audit_sha256", "receipts", "rows"}
+    configured_off_keys = {"source_proof", "source_predecessor_generation", "daily_control"}
+    require(type(expected) is dict and set(expected) in (keys, keys | configured_off_keys),
+            "RESTORE_EXPECTED")
     expected = parse(canonical(expected))
+    configured_off = "source_proof" in expected
     generation, account = expected["generation"], expected["account_id"]
     uuid = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
     require(all(type(v) is str and re.fullmatch(uuid, v) for v in (generation, account, expected["installation_id"], expected["source_installation_id"], expected["source_generation"])), "RESTORE_IDENTITY")
@@ -299,7 +346,7 @@ def _restore_changes(expected):
     require(all(type(v) is Decimal and v == v.to_integral_value() and 0 <= v <= I64
                 for v in (source, fence, restored)) and source < fence and restored == fence + 1,
             "RESTORE_EPOCH")
-    require(expected["source_epoch"] + 1 == source and expected["expected_epoch"] == source
+    require(expected["source_epoch"] + int(not configured_off) == source and expected["expected_epoch"] == source
             and expected["source_installation_id"] != expected["installation_id"]
             and expected["source_generation"] != generation
             and type(expected["destination_epoch_floor"]) is Decimal
@@ -309,9 +356,25 @@ def _restore_changes(expected):
     require(all(type(expected[k]) is str and HASH.fullmatch(expected[k])
                 for k in ("archive_sha256", "source_audit_sha256")), "RESTORE_DIGEST")
     changes = expected["rows"]
-    require(type(changes) is dict and set(changes) <= _RESTORE_INSERTS | _RESTORE_UPDATES.keys()
+    daily_table = "owner_beta_daily_control"
+    valid_tables = _RESTORE_INSERTS | _RESTORE_UPDATES.keys() | ({daily_table} if configured_off else set())
+    require(type(changes) is dict and set(changes) <= valid_tables
             and _RESTORE_INSERTS | {"owner_beta_paper_control"} <= changes.keys(), "RESTORE_TABLES")
     projection = json.loads(PROJECTION.read_bytes())["archive_audit_v1"]
+    if configured_off:
+        proof, daily = expected["source_proof"], expected["daily_control"]
+        require(type(proof) is dict and set(proof) == {"schema", "paper_control_sha256", "daily_control_sha256"}
+                and proof["schema"] == "owner-beta-paper-configured-off-source-v1"
+                and all(type(proof[key]) is str and HASH.fullmatch(proof[key])
+                        for key in ("paper_control_sha256", "daily_control_sha256")),
+                "RESTORE_SOURCE_PROOF")
+        predecessor = expected["source_predecessor_generation"]
+        require(predecessor is None or type(predecessor) is str and re.fullmatch(uuid, predecessor),
+                "RESTORE_OPERATION")
+        _row(daily_table, "etf11", daily, projection)
+        require(proof["daily_control_sha256"] == digest(canonical(daily))
+                and type(daily["enabled"]) is bool and
+                (daily_table in changes) is daily["enabled"], "RESTORE_DAILY_CONTROL")
     count = 0
     for table, rows in changes.items():
         require(type(rows) is dict and rows, "RESTORE_ROWS")
@@ -321,6 +384,14 @@ def _restore_changes(expected):
             require(type(change) is dict and set(change) == {"before", "after"}, "RESTORE_CHANGE")
             before, after = change["before"], change["after"]
             _row(table, key, after, projection)
+            if table == daily_table:
+                require(configured_off and list(rows) == ["etf11"] and before == daily
+                        and before["activation_epoch"] < I64
+                        and after["enabled"] is False and after["activation_epoch"] == before["activation_epoch"] + 1
+                        and all(before[k] == after[k] for k in before
+                                if k not in {"enabled", "activation_epoch", "updated_at"}),
+                        "RESTORE_DAILY_CONTROL")
+                continue
             require((after.get("account_id") if table != "owner_beta_paper_operation_observations"
                      else after["summary"].get("account_id")) == account, "RESTORE_ACCOUNT")
             if table in _RESTORE_INSERTS:
@@ -356,6 +427,10 @@ def _restore_changes(expected):
             and operation["fence_epoch"] == fence
             and max(source, operation["local_epoch_floor"]) + 1 == fence, "RESTORE_OPERATION")
     control = changes["owner_beta_paper_control"]["etf11"]["before"]
+    if configured_off:
+        require(control["state"] == "OFF"
+                and proof["paper_control_sha256"] == digest(canonical(control))
+                and control["owner_user_id"] == daily["owner_user_id"], "RESTORE_SOURCE_PROOF")
     require(operation["prior_state"] == control["state"], "RESTORE_OPERATION")
     events = {change["after"]["kind"]: change["after"]
               for change in changes["owner_beta_paper_events"].values()}
@@ -364,13 +439,18 @@ def _restore_changes(expected):
             and events["DRAIN_STARTED"]["payload"] == operation["intent"], "RESTORE_EVENT")
     require(operation["installation_id"] == expected["installation_id"]
             and operation["local_epoch_floor"] == expected["destination_epoch_floor"]
-            and operation["intent"].get("predecessor_generation") == expected["source_generation"]
+            and operation["intent"].get("predecessor_generation") ==
+                expected["source_predecessor_generation" if configured_off else "source_generation"]
             and operation["intent"].get("artifact_sha256") == expected["archive_sha256"], "RESTORE_OPERATION")
     observation = next(iter(changes["owner_beta_paper_operation_observations"].values()))["after"]
     require(observation["summary"].get("installation_id") == expected["installation_id"]
             and observation["summary"].get("generation") == generation
             and observation["summary"].get("control_epoch") == fence, "RESTORE_OBSERVATION")
     evidence = events["RESTORED_OFF"]["payload"]
+    if configured_off:
+        require(evidence.get("schema") == "owner-beta-paper-restore-receipt-v2"
+                and evidence.get("source_proof_sha256") == digest(canonical(proof)),
+                "RESTORE_SOURCE_PROOF")
     for key in ("installation_id", "generation", "account_id", "source_generation", "source_installation_id",
                 "source_epoch", "destination_epoch_floor", "archive_sha256", "source_audit_sha256"):
         require(evidence.get(key) == expected[key], "RESTORE_EVIDENCE")

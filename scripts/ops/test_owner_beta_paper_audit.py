@@ -201,8 +201,56 @@ class AuditTests(unittest.TestCase):
 
 
 
-class RestoreDeltaTests(unittest.TestCase):
+
+class ConfiguredOffSourceTests(unittest.TestCase):
     def fixture(self):
+        account_id = "11111111-1111-1111-1111-111111111111"
+        owner_id = "22222222-2222-2222-2222-222222222222"
+        paper_table, daily_table = "owner_beta_paper_control", "owner_beta_daily_control"
+        paper = dict.fromkeys(DOC["archive_table_columns"][paper_table])
+        paper.update(id="etf11", account_id=account_id, owner_user_id=owner_id,
+                     state="OFF", control_epoch=0)
+        daily = dict.fromkeys(DOC["archive_table_columns"][daily_table])
+        daily.update(id="etf11", owner_user_id=owner_id, enabled=True, activation_epoch=1)
+        return {paper_table: [("etf11", paper)], daily_table: [("etf11", daily)]}, account_id
+
+    def decode(self, rows, account_id, *, epoch=0):
+        return audit.decode_configured_off_source(io.BytesIO(wire(stream(rows))), account_id, epoch)
+
+    def test_binds_exact_off_epoch_zero_and_unchanged_daily(self):
+        rows, account_id = self.fixture()
+        description, proof, predecessor, controls = self.decode(rows, account_id)
+        self.assertIsNone(predecessor)
+        self.assertIs(controls["daily"]["enabled"], True)
+        self.assertEqual(description["schema"], "owner-beta-paper-database-description-v1")
+        for label in ("paper", "daily"):
+            control = rows[f"owner_beta_{label}_control"][0][1]
+            expected = "sha256:" + hashlib.sha256(json.dumps(
+                control, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            self.assertEqual(proof[f"{label}_control_sha256"], expected)
+        rows["owner_beta_paper_control"][0][1]["consent_event_id"] = "33333333-3333-3333-3333-333333333333"
+        self.assertNotEqual(self.decode(rows, account_id)[1]["paper_control_sha256"],
+                            proof["paper_control_sha256"])
+
+    def test_refuses_bound_or_wrong_controls_and_truncation(self):
+        rows, account_id = self.fixture()
+        paper = rows["owner_beta_paper_control"][0][1]
+        for variants in ({"state": "ENABLED"}, {"process_binding": {}}, {"control_epoch": 1}):
+            modified = copy.deepcopy(rows)
+            modified["owner_beta_paper_control"][0][1].update(variants)
+            with self.subTest(variants=variants), self.assertRaisesRegex(audit.AuditError, "CONFIGURED_OFF_CONTROL"):
+                self.decode(modified, account_id)
+        with self.assertRaisesRegex(audit.AuditError, "CONFIGURED_OFF_CONTROL"):
+            self.decode(rows, paper["owner_user_id"])
+        rows["owner_beta_daily_control"][0][1]["owner_user_id"] = account_id
+        with self.assertRaisesRegex(audit.AuditError, "CONFIGURED_OFF_CONTROL"):
+            self.decode(rows, account_id)
+        with self.assertRaises(audit.AuditError):
+            audit.decode_configured_off_source(io.BytesIO(wire(stream(rows))[:-1]), account_id, 0)
+
+
+class RestoreDeltaTests(unittest.TestCase):
+    def fixture(self, *, configured_off=False, daily_enabled=False):
         ids = [f"{n:08d}-1111-1111-1111-111111111111" for n in range(1, 10)]
         account_id, generation, installation, source_generation, source_installation, fence_id, off_id, observation_id, owner = ids
         stamp = "2026-11-11T00:00:00.000001Z"
@@ -222,8 +270,13 @@ class RestoreDeltaTests(unittest.TestCase):
         before = row("owner_beta_paper_control", id="etf11", account_id=account_id, owner_user_id=owner,
                      state="OFF", control_epoch=2, updated_at=stamp)
         after = {**before, "state":"RESTORED_OFF", "control_epoch":11}
+        daily = row("owner_beta_daily_control", id="etf11", owner_user_id=owner,
+                    enabled=daily_enabled, activation_epoch=4, updated_at=stamp)
+        proof = dict(schema="owner-beta-paper-configured-off-source-v1",
+                     paper_control_sha256=audit.digest(audit.canonical(before)),
+                     daily_control_sha256=audit.digest(audit.canonical(daily)))
         intent = {"generation":generation, "installation_id":installation, "account_id":account_id,
-            "predecessor_generation":source_generation, "artifact_sha256":sha}
+            "predecessor_generation":None if configured_off else source_generation, "artifact_sha256":sha}
         operation = row("owner_beta_paper_operations", generation=generation, installation_id=installation,
             account_id=account_id, request_key=generation+":begin", purpose="RESTORE", scope="COMBINED_BACKUP", prior_state="OFF",
             expected_epoch=2, local_epoch_floor=9, fence_epoch=10, intent=intent, fence_event_id=fence_id,
@@ -246,6 +299,9 @@ class RestoreDeltaTests(unittest.TestCase):
             "source_epoch":1, "destination_epoch_floor":9, "archive_sha256":sha,
             "source_audit_sha256":sha, "restored_audit_sha256":sha, "expected_epoch":2,
             "resulting_epoch":10, "observation_id":observation_id}
+        if configured_off:
+            evidence.update(schema="owner-beta-paper-restore-receipt-v2", source_epoch=2,
+                            source_proof_sha256=audit.digest(audit.canonical(proof)))
         off = row("owner_beta_paper_events", id=off_id, owner_user_id=owner, account_id=account_id,
             control_epoch=11, kind="RESTORED_OFF", payload=evidence, occurred_at=stamp, request_key=generation+":restore-off",
             payload_sha256=audit.digest(audit.canonical(evidence)),
@@ -270,7 +326,16 @@ class RestoreDeltaTests(unittest.TestCase):
             "fence_epoch":10,"restore_epoch":11,"archive_sha256":sha,"source_audit_sha256":sha,
             "receipts":receipts,"rows":rows}
         source = {"owner_beta_paper_control":[("etf11",before)]}
+        if configured_off:
+            expected.update(source_epoch=2, source_proof=proof,
+                            source_predecessor_generation=None, daily_control=daily)
+            source["owner_beta_daily_control"] = [("etf11", daily)]
+            if daily_enabled:
+                rows["owner_beta_daily_control"] = {"etf11": {"before":daily, "after":{
+                    **daily, "enabled":False, "activation_epoch":5}}}
         destination = {table:sorted((key,change["after"]) for key,change in changes.items()) for table,changes in rows.items()}
+        if configured_off and not daily_enabled:
+            destination["owner_beta_daily_control"] = [("etf11", daily)]
         return source, destination, expected
 
     def compare(self, original, destination, expected, **datasets):
@@ -280,6 +345,32 @@ class RestoreDeltaTests(unittest.TestCase):
     def test_exact_restore_trace_accepts_fence10_off11_source_receipt_epoch1(self):
         source, destination, expected = self.fixture()
         self.assertIsNone(self.compare(source, destination, expected))
+
+    def test_configured_off_restore_binds_captured_source_when_daily_was_off_or_on(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled):
+                source, destination, expected = self.fixture(configured_off=True, daily_enabled=enabled)
+                self.assertIsNone(self.compare(source, destination, expected))
+                self.assertEqual(source["owner_beta_daily_control"][0][1]["enabled"], enabled)
+                self.assertFalse(destination["owner_beta_daily_control"][0][1]["enabled"])
+                self.assertEqual(destination["owner_beta_daily_control"][0][1]["activation_epoch"],
+                                 4 + int(enabled))
+
+    def test_configured_off_restore_refuses_extra_daily_change_or_wrong_source_proof(self):
+        source, destination, expected = self.fixture(configured_off=True, daily_enabled=True)
+        updated = destination["owner_beta_daily_control"][0][1]
+        updated["activation_epoch"] = 6
+        with self.assertRaisesRegex(audit.AuditError, "RESTORE_DAILY_CONTROL"):
+            self.compare(source, destination, expected)
+        updated["activation_epoch"] = 5
+        updated["first_auto_session"] = "2026-11-26"
+        with self.assertRaisesRegex(audit.AuditError, "RESTORE_DAILY_CONTROL"):
+            self.compare(source, destination, expected)
+        updated["first_auto_session"] = None
+        off = next(value for _, value in destination["owner_beta_paper_events"] if value["kind"] == "RESTORED_OFF")
+        self.replace_restore_evidence(destination, expected, {**off["payload"], "source_proof_sha256": "sha256:"+"1"*64})
+        with self.assertRaisesRegex(audit.AuditError, "RESTORE_SOURCE_PROOF"):
+            self.compare(source, destination, expected)
 
     def replace_restore_evidence(self, destination, expected, evidence):
         off = next(value for _, value in destination["owner_beta_paper_events"] if value["kind"] == "RESTORED_OFF")
@@ -319,7 +410,7 @@ class RestoreDeltaTests(unittest.TestCase):
         owner.operation = types.SimpleNamespace(_intent={**operation["intent"],"expected_epoch":2,"local_epoch_floor":9,
             "scope":"COMBINED_BACKUP", "release_manifest_sha256":expected["archive_sha256"]},
             intent_sha256=operation["intent_sha256"])
-        owner.archive = dict(installation_id=expected["source_installation_id"],generation=expected["source_generation"],
+        owner.archive = dict(schema=backup._ARCHIVE_V1, profile="paper-combined", installation_id=expected["source_installation_id"],generation=expected["source_generation"],
             control_epoch=2,audit_sha256=expected["source_audit_sha256"])
         owner.archive_sha256 = expected["archive_sha256"]
         owner.fence, owner.begin_event = 10, operation["fence_event_id"]

@@ -45,6 +45,122 @@ def digest(data):
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+class ArmedArchiveObservationTests(unittest.TestCase):
+    def setUp(self):
+        self.repo = SOURCE.parents[3]
+        self.source = ops._load_local("paper_stop_source", "owner-beta-paper-evidence.py")
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = pathlib.Path(temporary.name)
+        self.lease = object.__new__(ops._ArmedSourceArchive)
+        self.lease.root = self.root
+        self.lease.source = self.source
+        self.lease.deadline = mock.Mock()
+        self.lease.deadline.remaining.side_effect = lambda cap: cap
+
+        @contextlib.contextmanager
+        def opened(path, *, directory=False, **_policy):
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if directory else 0))
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+        patcher = mock.patch.object(self.source, "opened", opened)
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
+    def armed(self):
+        fixture = self.repo / "crates/job-queue/tests/fixtures/owner_beta_paper_source_evidence/valid_chain.json"
+        events = json.loads(fixture.read_bytes())["events"]
+        self.lease.session = events[0]["session"]
+        self.lease.binding = {"cohort": events[0]["cohort"]}
+        self.lease.boot = events[0]["arm"]["boot_id"]
+        self.lease.publisher = events[0]["arm"]["parent"]
+        slot = self.root / "events" / events[0]["slot_id"][7:]
+        slot.mkdir(parents=True)
+        claim = self.root / ".control" / (self.source.dispatch_key(events[0]["cohort"], self.lease.session) + ".json")
+        claim.parent.mkdir()
+        original = {key: events[0][key] for key in ("schema", "slot_id", "session", "due_realtime_ns",
+                    "cohort", "arm", "reservation_id", "invocation_id")}
+        claim.write_bytes(self.source.canonical(original))
+        for index, event in enumerate(events[:3]):
+            (slot / ("%06d.json" % index)).write_bytes(self.source.canonical(event))
+        return slot, claim, events
+
+    def test_actual_source_chain_requires_same_armed_claim_and_no_dispatched_tail(self):
+        slot, claim, events = self.armed()
+        raw_claim, original = self.lease._armed_evidence()
+        self.assertEqual(raw_claim, claim.read_bytes())
+        self.assertEqual(self.source.decode(original[-1]), events[2])
+        claim.write_bytes(self.source.canonical({"same_slot": events[0]["slot_id"]}))
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_CLAIM"):
+            self.lease._armed_evidence()
+        claim.write_bytes(raw_claim)
+        (slot / "000003.json").write_bytes(self.source.canonical(events[3]))
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_NOT_ARMED"):
+            self.lease._armed_evidence()
+
+    def test_armed_process_and_boot_identity_are_both_required(self):
+        self.armed()
+        before = self.lease.publisher
+        self.lease.publisher = {**before, "start_ticks": before["start_ticks"] + 1}
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_NOT_ARMED"):
+            self.lease._armed_evidence()
+        self.lease.publisher = before
+        self.lease.boot = str(uuid.uuid4())
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_NOT_ARMED"):
+            self.lease._armed_evidence()
+
+    def test_pretty_pinned_calendar_requires_runway_and_matching_digest(self):
+        calendar = self.root / "calendar.json"
+        calendar.write_text(json.dumps({"calendar_id": "xkrx-historical-session-dates", "timezone": "Asia/Seoul",
+                               "sessions": [{"date": "2026-11-25"}, {"date": "2026-11-26"}]}, indent=2) + "\n")
+        self.lease.binding = {"calendar_file": str(calendar), "cohort": {"calendar_sha256": digest(calendar.read_bytes())}}
+        due = self.source.due_ns("2026-11-25")
+        with mock.patch.object(ops.time, "time_ns", return_value=due - 1200 * 10**9):
+            self.assertEqual(self.lease._calendar_session(), "2026-11-25")
+        with mock.patch.object(ops.time, "time_ns", return_value=due - 800 * 10**9):
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_RUNWAY"):
+                self.lease._calendar_session()
+        calendar.write_bytes(calendar.read_bytes() + b"\n")
+        with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_CALENDAR"):
+            self.lease._calendar_session()
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux owned Current OFD")
+    def test_current_heartbeat_replacement_preserves_generation_and_requires_live_ofd(self):
+        fixture = self.repo / "tests/fixtures/owner_beta_paper_current_binding/valid-current.json"
+        current = self.source.decode(fixture.read_bytes())
+        self.lease.binding, self.lease.publisher = current["binding"], current["publisher"]
+        self.lease.boot, self.lease.current = current["boot_id"], None
+        parent = self.root / "current"
+        parent.mkdir()
+        path = parent / self.source.CURRENT_LEAF
+
+        def emit(value, *, lock):
+            tmp = parent / "next"
+            tmp.write_bytes(self.source.canonical(value))
+            fd = os.open(tmp, os.O_RDWR)
+            self.addCleanup(os.close, fd)
+            if lock:
+                item = self.source.OfdFlock(fcntl.F_WRLCK, os.SEEK_SET, 0, 0, 0)
+                fcntl.fcntl(fd, self.source.OFD_SETLK, bytes(item))
+            os.replace(tmp, path)
+
+        with mock.patch.object(self.source, "sample", return_value={
+                key: part + 10**9 for key, part in current["observed"].items()}):
+            emit(current, lock=True)
+            self.assertEqual(self.source.decode(self.lease._sample_current()), current)
+            advanced = {**current, "sequence": current["sequence"] + 1}
+            emit(advanced, lock=True)
+            self.assertEqual(self.source.decode(self.lease._sample_current()), advanced)
+            emit(advanced, lock=False)
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN"):
+                self.lease._sample_current()
+            emit({**advanced, "generation": str(uuid.uuid4())}, lock=True)
+            with self.assertRaisesRegex(ops.PaperOperationsError, "PAPER_OPS_SOURCE_CURRENT_UNKNOWN"):
+                self.lease._sample_current()
+
+
 def fixture_journal_dir_info(fd, mode=None):
     info = os.fstat(fd)
     if (not stat.S_ISDIR(info.st_mode)
