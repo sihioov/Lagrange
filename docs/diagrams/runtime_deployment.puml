@@ -119,7 +119,7 @@
 ' evidence: .github/workflows/ci.yml:1463-1470
 ' The optional installer check folds the OFF-only Compose model: it renders the
 ' exact future API and Paper scheduler inputs without creating serving containers.
-' evidence: scripts/ops/deploy-production-release.sh:468-475; scripts/ops/lib/owner-beta-paper-preflight.py:25-44; deploy/compose/compose.owner-beta-paper-preflight.yml:51-82
+' evidence: scripts/ops/deploy-production-release.sh:468-475; scripts/ops/lib/owner-beta-paper-preflight.py:27-63; deploy/compose/compose.owner-beta-paper-preflight.yml:51-82
 ' Arrows mean actual communication (HTTP / SQL / file I/O / process spawn),
 ' NOT compose depends_on (which is startup ordering only).
 ' Every arrow carries an evidence comment ("' evidence: <file:line>").

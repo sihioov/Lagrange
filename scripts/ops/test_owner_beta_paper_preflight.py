@@ -51,14 +51,16 @@ class PaperProcessPreflightTests(unittest.TestCase):
         manifest, self.images = manifest_fixture()
         self.manifest_sha = release._digest(manifest)
         self.mounts = preflight.mounts(self.release, DATA, ARTIFACTS)
+        self.bind_options = preflight.no_create_options(self.environment, release._fail)
 
     def render(self):
         raw = preflight.render(self.release, str(self.env_path), PROJECT, self.images,
                                self.environment, release._fail)
         return json.loads(raw)
 
-    def assert_model(self, model):
-        preflight.validate_model(model, PROJECT, self.images, self.mounts, DATA, ARTIFACTS, release._fail)
+    def assert_model(self, model, *, options=None):
+        preflight.validate_model(model, PROJECT, self.images, self.mounts, DATA, ARTIFACTS,
+                                 self.bind_options if options is None else options, release._fail)
 
     def test_witness_flag_is_restricted_to_the_official_check(self):
         command = ["/bin/bash", str(ROOT / "scripts/ops/deploy-production-release.sh"),
@@ -70,6 +72,19 @@ class PaperProcessPreflightTests(unittest.TestCase):
 
     def test_real_render_keeps_both_services_off_and_pins_all_aliases(self):
         self.assert_model(self.render())
+
+    def test_compose_v2_zero_value_retains_no_create_bind_semantics(self):
+        model = self.render()
+        for name in preflight.SERVICES:
+            for volume in model["services"][name]["volumes"]:
+                if volume["target"] in self.mounts:
+                    volume["bind"] = {}
+        self.assert_model(model, options={})
+        required = next(volume for volume in model["services"]["api-server"]["volumes"]
+                        if volume["target"] in self.mounts)
+        del required["bind"]
+        with self.assertRaisesRegex(release.PaperReleaseError, "PAPER_RELEASE_PREFLIGHT_MOUNTS"):
+            self.assert_model(model, options={})
 
     def test_real_render_rejects_writeable_swapped_and_missing_mounts(self):
         overlay = self.compose_dir / preflight.OVERLAY

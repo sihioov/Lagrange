@@ -1,6 +1,7 @@
 """Check the fixed future Paper consumer mounts while the release stays OFF."""
 
 from contextlib import ExitStack
+import json
 import subprocess
 
 
@@ -23,16 +24,10 @@ def mounts(release, data, artifacts):
     }
 
 
-def render(release, env_path, project, images, environment, fail):
-    compose = release + "/deploy/compose/"
+def _compose_config(arguments, environment, fail, *, model=b"", services=()):
     result = subprocess.run(
-        ["/usr/bin/docker", "compose", "--project-name", project, "--env-file", env_path,
-         "-f", compose + "compose.yml", "-f", compose + OVERLAY,
-         "config", "--no-env-resolution", "--format", "json", *SERVICES],
-        env={**environment, "LAGRANGE_PAPER_PREFLIGHT_RELEASE": release,
-             "LAGRANGE_PAPER_PREFLIGHT_API_IMAGE": images["api-server"],
-             "LAGRANGE_PAPER_PREFLIGHT_WORKER_IMAGE": images["paper-scheduler"]},
-        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        ["/usr/bin/docker", "compose", *arguments, "config", "--no-env-resolution", "--format", "json", *services],
+        env=environment, input=model, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         check=False, timeout=30,
     )
     if result.returncode != 0 or len(result.stdout) > 512 * 1024:
@@ -40,7 +35,35 @@ def render(release, env_path, project, images, environment, fail):
     return result.stdout
 
 
-def validate_model(model, project, images, expected, data, artifacts, fail):
+def render(release, env_path, project, images, environment, fail):
+    compose = release + "/deploy/compose/"
+    return _compose_config(
+        ["--project-name", project, "--env-file", env_path,
+         "-f", compose + "compose.yml", "-f", compose + OVERLAY],
+        {**environment, "LAGRANGE_PAPER_PREFLIGHT_RELEASE": release,
+         "LAGRANGE_PAPER_PREFLIGHT_API_IMAGE": images["api-server"],
+         "LAGRANGE_PAPER_PREFLIGHT_WORKER_IMAGE": images["paper-scheduler"]}, fail, services=SERVICES)
+
+
+def no_create_options(environment, fail):
+    # Compose releases can omit opposite default values from the rendered
+    # bind object. Measure both encodings on this CLI using an inert model.
+    mounts = [{"type": "bind", "source": "/paper-preflight-unused", "target": "/" + label,
+               "read_only": True, "bind": {"create_host_path": create}}
+              for label, create in (("no-create", False), ("create", True))]
+    model = json.dumps({"services": {"probe": {"image": "scratch", "volumes": mounts}}}).encode()
+    rendered = json.loads(_compose_config(["--project-name", "lagrange-paper-mount-probe",
+                    "--env-file", "/dev/null", "-f", "-"], environment, fail, model=model))
+    volumes = rendered["services"]["probe"]["volumes"]
+    options = {mount["target"]: mount.get("bind") for mount in volumes}
+    disabled, enabled = options.get("/no-create"), options.get("/create")
+    if (len(volumes) != 2 or disabled not in ({}, {"create_host_path": False})
+            or enabled not in ({}, {"create_host_path": True}) or disabled == enabled):
+        fail("PAPER_RELEASE_PREFLIGHT_MOUNTS")
+    return disabled
+
+
+def validate_model(model, project, images, expected, data, artifacts, bind_options, fail):
     if type(model) is not dict or model.get("name") != project or type(model.get("services")) is not dict:
         fail("PAPER_RELEASE_PREFLIGHT_RENDER")
     # Other services (e.g. postgres) can appear as Compose dependencies. Only
@@ -64,7 +87,7 @@ def validate_model(model, project, images, expected, data, artifacts, fail):
             fail("PAPER_RELEASE_PREFLIGHT_MOUNTS")
         for target, source in expected.items():
             if destinations[target] != {"type": "bind", "source": source, "target": target,
-                                        "read_only": True, "bind": {"create_host_path": False}}:
+                                        "read_only": True, "bind": bind_options}:
                 fail("PAPER_RELEASE_PREFLIGHT_MOUNTS")
         for target, (source, readonly) in existing.items():
             volume = destinations[target]
@@ -130,7 +153,9 @@ def verify(release, path, verified, source, operations, release_helpers):
                                for name in ("compose.yml", OVERLAY))
         model = release_helpers._json(render(release, env_path, b["project"], images,
                                              operations.ENVIRONMENT, fail), 512 * 1024)
-        validate_model(model, b["project"], images, expected, data, artifacts, fail)
+        bind_options = no_create_options(operations.ENVIRONMENT, fail)
+        validate_model(model, b["project"], images, expected, data, artifacts,
+                       bind_options, fail)
         if (source.binding(path) != (b, original) or operations.read_manifest(release, commit) != images
                 or any(install.read_root_file(file, gid=0, mode=0o644, maximum=256 * 1024) != before
                        for file, before in compose_inputs)):

@@ -737,7 +737,7 @@ paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action li
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1338-1341,1348-1366
 paper_ops_release --> paper_history_inventory : reader_guard consumes the in-process proof
-' evidence: scripts/ops/deploy-production-release.sh:468; scripts/ops/lib/owner-beta-paper-release.py:1425; scripts/ops/lib/owner-beta-paper-preflight.py:76; scripts/ops/lib/owner-beta-paper-preflight.py:31; deploy/compose/compose.owner-beta-paper-preflight.yml:51
+' evidence: scripts/ops/deploy-production-release.sh:468; scripts/ops/lib/owner-beta-paper-release.py:1425; scripts/ops/lib/owner-beta-paper-preflight.py:99; scripts/ops/lib/owner-beta-paper-preflight.py:38; deploy/compose/compose.owner-beta-paper-preflight.yml:51
 paper_ops_release --> paper_consumer_preflight : installed --check; verify exact Source and OFF consumer model
 ' evidence: scripts/ops/lib/owner-beta-paper-history-inventory.py:440-457,482-493
 paper_history_inventory --> daily_ops : source manifest / project / context binding;\nmigration-owner DB transport (Database.execute)
