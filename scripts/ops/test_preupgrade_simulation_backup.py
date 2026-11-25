@@ -1186,6 +1186,7 @@ class NightlyTests(Base):
         self.bad_targets = False
         self.old_maintenance_plan = False
         self.configured_paper = False
+        self.paper_capacity = None
         self.paper_proof = "sha256:" + "d" * 64
         self.paper_archive = None
         self.paper_archive_count = 0
@@ -1311,6 +1312,11 @@ class NightlyTests(Base):
             operation, mode = argv[argv.index("--operation") + 1], argv[argv.index("--mode") + 1]
             if operation == "nightly-combined-backup" and mode == "preflight":
                 self.children(argv, env, timeout)
+                if self.paper_capacity is not None:
+                    try:
+                        self.paper_capacity(argv)
+                    except self.paper_capacity_error as exc:
+                        return 1, b"", ("PAPER_BACKUP: FAILED " + str(exc) + "\n").encode()
                 return 0, ("\n".join((tool.PREFLIGHT_LINE, tool.PAPER_PREFLIGHT_LINE,
                                       tool.PAPER_ORIGIN_PREFIX + self.paper_proof)) + "\n").encode(), b""
             if operation == "nightly-combined-paper-readback":
@@ -1627,6 +1633,51 @@ class NightlyTests(Base):
         self.assertFailed(self.run_tool(argv), tool.NIGHTLY_ERROR)
         self.assertEqual(self.progress()["steps"], {})
         self.assertEqual(self.mutations(), [])
+
+    def test_configured_off_apply_forwards_claim_date_and_refuses_capacity_before_pause(self):
+        self.configured_paper = True
+        self.combined_fixture(enabled=True)
+        date = "2026-11-25"
+        state_root = Path(self.state)
+        source = Path(__file__).with_name("lib") / "owner-beta-paper-backup.py"
+        spec = importlib.util.spec_from_file_location("sequencer_paper_capacity_test", source)
+        paper = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = paper
+        spec.loader.exec_module(paper)
+        usage = SimpleNamespace(f_flag=0, f_bavail=0, f_frsize=4096)
+
+        @contextlib.contextmanager
+        def directory(name):
+            fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                yield fd
+            finally:
+                os.close(fd)
+
+        install = SimpleNamespace(root_directory=directory, directory_info=mock.Mock())
+        storage = SimpleNamespace(daily=SimpleNamespace(install=install), values={"MIN_FREE_BYTES": 1},
+            reserve=mock.Mock(), retained_size=mock.Mock(return_value=100), maximum=100)
+
+        def capacity(argv):
+            self.assertEqual(argv[argv.index("--nightly-state-date") + 1], date)
+            paper._preflight_nightly_capacity(storage, self.state)
+
+        self.paper_capacity, self.paper_capacity_error = capacity, paper.PaperBackupError
+        for index, (flags, free, refusal) in enumerate(((0, 0, "SPACE"), (os.ST_RDONLY, 10, "SPACE"),
+                                                       (0, 10, "RETENTION_CAP"))):
+            with self.subTest(refusal=refusal, flags=flags), mock.patch.object(os, "fstatvfs", return_value=usage):
+                scenario = state_root / str(index) / date
+                scenario.mkdir(mode=0o700, parents=True)
+                self.state = str(scenario)
+                argv = self.combined_argv("--apply", "--nightly", "--expected-nightly-paper-profile", "CONFIGURED_OFF")
+                usage.f_flag, usage.f_bavail = flags, free
+                result = self.run_tool(argv)
+                self.assertFailed(result, "PREUPGRADE_TOOL")
+                self.assertIn("PAPER_BACKUP_" + refusal, result[2])
+                self.assertEqual(self.steps(), {})
+                self.assertEqual(self.mutations(), [])
+                self.assertTrue(self.docker.containers[BETA_ID]["State"]["Running"])
+                self.assertEqual((self.daily_enabled, self.daily_epoch), (True, 4))
 
     def test_configured_off_recovery_requires_origin_or_proof_backup_never_started(self):
         self.configured_paper = self.changed_paper_readback = True

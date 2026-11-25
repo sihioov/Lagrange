@@ -311,6 +311,10 @@ class Sequencer:
                 "--expected-db-first-session", a.expected_db_first_session,
                 "--expected-config-first-session", a.expected_config_first_session,
                 "--stopped-worker-from-commit", a.stopped_worker_from_commit]
+        if (self.combined and a.mode == "apply" and
+                (mode == "preflight"
+                 or (mode == "apply" and record["nightly"].get("paper_configured_off") is True))):
+            argv.extend(("--nightly-state-date", Path(a.state_dir).name))
         if self.combined and mode in {"apply", "readback"}:
             original = record["nightly"]
             state = "ENABLED" if original["daily_enabled"] else "DISABLED"
