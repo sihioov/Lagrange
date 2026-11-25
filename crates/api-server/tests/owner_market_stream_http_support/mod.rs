@@ -291,6 +291,7 @@ impl CaseContext {
             code_commit: boundary::CODE_COMMIT.to_owned(),
             owner_beta_access: OwnerBetaAccessMode::Disabled,
             owner_beta_paper: OwnerBetaPaperMode::Disabled,
+            owner_beta_paper_off_consent_enabled: false,
             owner_beta_price_input: OwnerBetaPriceInputMode::Disabled,
             owner_beta_daily:
                 job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,

@@ -485,9 +485,11 @@ test("uses login recovery when cancellation expires after successful CSRF prefli
   page,
   request,
 }) => {
-  await setScenario(request, { ...OWNER_SIMULATION, ownerBetaSimulation: "pending" });
-  await page.goto("/backtests/owner-beta/price-only");
-  await page.getByRole("button", { name: "Select 2026-08-27 to 2026-08-28, PENDING" }).click();
+  await test.step("R4_SIM_CANCEL_EXPIRED_SETUP", async () => {
+    await setScenario(request, { ...OWNER_SIMULATION, ownerBetaSimulation: "pending" });
+    await page.goto("/backtests/owner-beta/price-only");
+    await page.getByRole("button", { name: "Select 2026-08-27 to 2026-08-28, PENDING" }).click();
+  });
   const origin = new URL(page.url()).origin;
   await page.route(
     (url) =>
@@ -505,12 +507,19 @@ test("uses login recovery when cancellation expires after successful CSRF prefli
       current.method() === "POST" &&
       new URL(current.url()).pathname === `${SIMULATION_RUNS_PATH}/${SIMULATION_RUN_ID}/cancel`,
   );
-  await page.getByRole("button", { name: "Request cancellation" }).click();
-  const [csrf, cancel] = await Promise.all([csrfResponse, cancelRequest]);
-  expect(csrf.status()).toBe(200);
-  expect(cancel.headers()["x-csrf-token"]).toBeTruthy();
-  expect(cancel.headers()["idempotency-key"]).toBeTruthy();
-  await expect(page).toHaveURL(/\/auth\/login$/);
+  await test.step("R4_SIM_CANCEL_EXPIRED_TRIGGER", () =>
+    page.getByRole("button", { name: "Request cancellation" }).click());
+  const [csrf, cancel] = await test.step("R4_SIM_CANCEL_EXPIRED_REQUESTS", () =>
+    Promise.all([
+      test.step("R4_SIM_CANCEL_EXPIRED_CSRF", () => csrfResponse),
+      test.step("R4_SIM_CANCEL_EXPIRED_POST", () => cancelRequest),
+    ]));
+  await test.step("R4_SIM_CANCEL_EXPIRED_RECOVERY", async () => {
+    expect(csrf.status()).toBe(200);
+    expect(cancel.headers()["x-csrf-token"]).toBeTruthy();
+    expect(cancel.headers()["idempotency-key"]).toBeTruthy();
+    await expect(page).toHaveURL(/\/auth\/login$/);
+  });
 });
 
 test("owner without exact owner-only mode gets the bounded page without API construction", async ({

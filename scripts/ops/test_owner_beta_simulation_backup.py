@@ -629,6 +629,41 @@ class PreservedLegacyHistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "INACTIVE_BACKUP_LEGACY_TREE"):
             storage.verify_archive(io.BytesIO(data), profile="daily-simulation")
 
+    def test_active_nightly_file_references_use_the_same_epoch_before_and_after_archive_round_trip(self):
+        binding, evidence = evidence_fixture()
+        policy = b"synthetic-nightly-policy"
+        policy_sha = "sha256:" + hashlib.sha256(policy).hexdigest()
+        evidence["config/policy.json"] = policy
+        original_bundle = archive(
+            "daily-simulation", evidence, metadata_override={"config/policy.json": (0, 10001, 0o440)}
+        )
+        storage = object.__new__(daily_backup.NightlyDailySimulationStorage)
+        storage.limits, storage.simulation_binding = files.Limits(1000000), binding
+        storage.nightly = (True, 4)
+        original = {"schema": "lagrange-daily-backup-db-v1", "run_count": 0,
+                    "admissions": [], "verified_frontiers": [], "tables": [
+                        {"name": name, "row_count": int(name == "owner_beta_daily_control"), "sha256": policy_sha}
+                        for name in files.AUDIT_TABLES],
+                    "control": {"enabled": True, "activation_epoch": 4, "policy_sha256": policy_sha,
+                                "owner_user_id": "00000000-0000-4000-8000-000000000001",
+                                "first_auto_session": "2026-11-25",
+                                "trigger_version": "owner-beta-daily-trigger-v1"}}
+        manifest = storage.verify_archive(io.BytesIO(original_bundle), profile="daily-simulation")
+        storage.verify_daily_archive_references(manifest, original)
+        restored_original = json.loads(files.canonical(original))
+        restored_manifest = storage.verify_archive(io.BytesIO(bytes(original_bundle)), profile="daily-simulation")
+        storage.verify_daily_archive_references(restored_manifest, restored_original)
+        with self.assertRaisesRegex(files.SnapshotError, "DAILY_BACKUP_DATABASE_ENABLED"):
+            files.database_references(restored_manifest, restored_original)
+        for wrong in ({"activation_epoch": 5}, {"enabled": False}):
+            with self.subTest(wrong=wrong):
+                changed = {**restored_original, "control": {**restored_original["control"], **wrong}}
+                with self.assertRaisesRegex(daily_backup.files.SnapshotError, "DAILY_BACKUP_NIGHTLY_BINDING"):
+                    storage.verify_daily_archive_references(restored_manifest, changed)
+        isolated_after = daily_backup.isolated_daily_off_sql(storage.nightly)
+        self.assertIn("enabled IS true AND activation_epoch=4", isolated_after)
+        self.assertIn("NOT enabled AND activation_epoch=5", isolated_after)
+
     def test_normal_simulation_verifier_still_rejects_legacy_siblings(self):
         binding, data = preserved_legacy_archive()
         with self.assertRaises(ops.OperationError):

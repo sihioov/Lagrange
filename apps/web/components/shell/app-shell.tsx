@@ -16,6 +16,7 @@ import { RouteAwareShell } from "@/components/stock-beta/terminal";
 import {
   type ApiSession,
   type OwnerBetaProduct,
+  permitsOwnerBetaPaperOffConsent,
   permitsOwnerBetaProduct,
 } from "@/lib/api/contracts";
 import { LocaleProvider } from "@/lib/i18n/client";
@@ -70,7 +71,11 @@ function memberNavigation(t: ShellDictionary, session: ApiSession): PrimaryNavig
   } as const satisfies Record<string, OwnerBetaProduct>;
   return items.filter((item) => {
     const product = ownerBetaDestinations[item.href as keyof typeof ownerBetaDestinations];
-    return product === undefined || permitsOwnerBetaProduct(session, product);
+    return (
+      product === undefined ||
+      permitsOwnerBetaProduct(session, product) ||
+      (product === "paper" && permitsOwnerBetaPaperOffConsent(session))
+    );
   });
 }
 

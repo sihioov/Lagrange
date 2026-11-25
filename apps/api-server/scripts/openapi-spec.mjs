@@ -708,10 +708,10 @@ function successResponsesFor(method, path) {
     return { "200": json("Supported owner-beta price-only artifact sessions", "#/components/schemas/OwnerBetaPriceOnlySupportedAsOf") };
   }
   if (path === "/api/v1/paper/owner-beta/state" && method === "get") {
-    return { "200": json("Owner-beta Paper state, including typed DISABLED and UNBOUND states", "#/components/schemas/OwnerBetaPaperState") };
+    return { "200": json("Owner-beta Paper state. An explicitly selected OFF installation exposes only the configured Owner consent state, with no sessions.", "#/components/schemas/OwnerBetaPaperState") };
   }
   if (path === "/api/v1/paper/owner-beta/consent" && method === "post") {
-    return { "200": json("Durable Owner consent grant or revocation", "#/components/schemas/OwnerBetaPaperConsent") };
+    return { "200": json("Durable Owner consent grant or revocation. An explicitly selected OFF installation limits the action to the original configured account. A grant requires current Paper view and recommendation rights.", "#/components/schemas/OwnerBetaPaperConsent") };
   }
   if (path === "/api/v1/paper/owner-beta/previews" && method === "post") {
     return {
@@ -4021,6 +4021,7 @@ const SCHEMAS = {
       auth_time_secs: { type: "integer" },
       owner_beta_access_mode: { type: "string", enum: ["disabled", "owner_only"] },
       owner_beta_paper_mode: { type: "string", enum: ["disabled", "enabled"] },
+      owner_beta_paper_off_consent_enabled: { type: "boolean" },
     },
   },
   EmptyBody: { type: "object", additionalProperties: false },

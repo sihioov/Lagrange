@@ -469,6 +469,7 @@ async fn build_services(args: &RunnerArgs) -> Result<RunnerServices, String> {
             code_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
             owner_beta_access,
             owner_beta_paper,
+            owner_beta_paper_off_consent_enabled: false,
             owner_beta_price_input: api_server::http::state::OwnerBetaPriceInputMode::Disabled,
             owner_beta_daily:
                 job_queue::owner_beta::runner::daily_runtime::DailyProcessMode::Disabled,

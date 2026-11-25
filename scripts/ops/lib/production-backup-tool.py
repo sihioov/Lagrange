@@ -48,6 +48,8 @@ REQUIRED = frozenset((
     "scripts/ops/install-production-backup.sh",
     "scripts/ops/transition-production-backup.py",
     "deploy/db/daily-backup-verify.sh",
+    "deploy/db/owner-beta-paper-configured-off-restore.sql",
+    "deploy/db/owner-beta-paper-off-source-fence.sql",
     "deploy/db/owner-beta-daily-backup-audit.sql", PAPER_PROJECTION, *UNITS))
 
 

@@ -106,7 +106,10 @@ grep -Fq 'OWNER_BETA_PAPER_MODE: ${OWNER_BETA_PAPER_MODE:-disabled}' "$compose_f
   die 'Compose owner-beta Paper policy injection missing'
 grep -Fq 'OWNER_BETA_EQUITY_SIGNALS_MODE: ${OWNER_BETA_EQUITY_SIGNALS_MODE:-disabled}' "$compose_file" ||
   die 'Compose fixed-equity owner-beta policy injection missing'
-[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 8 ] ||
+[ "$(grep -Fxc '      OWNER_BETA_PAPER_OFF_CONSENT_ENABLED: ${OWNER_BETA_PAPER_OFF_CONSENT_ENABLED:-false}' <<<"$api_block")" -eq 1 ] &&
+  [ "$(grep -Ec '^[[:space:]]+OWNER_BETA_PAPER_OFF_CONSENT_ENABLED:' "$compose_file")" -eq 1 ] ||
+  die 'Compose owner-beta Paper OFF consent must default to false and reach only api-server'
+[ "$(grep -Ec '^[[:space:]]+OWNER_BETA_[A-Z0-9_]+:' "$compose_file")" -eq 9 ] ||
   die 'Compose owner-beta mode and simulation policy inventory changed'
 for policy in 'OWNER_BETA_SIMULATION_MODE: disabled' 'OWNER_BETA_ACCESS_MODE: disabled' \
   'OWNER_BETA_PRICE_INPUT_MODE: disabled'; do

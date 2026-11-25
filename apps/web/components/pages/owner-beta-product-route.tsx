@@ -3,6 +3,7 @@ import { OwnerAccessRefusal, OwnerBetaPaperUnavailable } from "@/components/page
 import {
   type ApiSession,
   type OwnerBetaProduct,
+  permitsOwnerBetaPaperOffConsent,
   permitsOwnerBetaProduct,
 } from "@/lib/api/contracts";
 import { getServerSession } from "@/lib/api/server-session";
@@ -11,6 +12,7 @@ import { getLocale } from "@/lib/i18n/server";
 export type OwnerBetaProductRouteProps = {
   readonly product: OwnerBetaProduct;
   readonly renderProduct: (session: ApiSession) => ReactNode | Promise<ReactNode>;
+  readonly renderPaperOffConsent?: () => ReactNode | Promise<ReactNode>;
   readonly title: string;
 };
 
@@ -24,9 +26,17 @@ export type OwnerBetaProductRouteProps = {
 export async function OwnerBetaProductRoute({
   product,
   renderProduct,
+  renderPaperOffConsent,
   title,
 }: OwnerBetaProductRouteProps) {
   const [session, locale] = await Promise.all([getServerSession(), getLocale()]);
+  if (
+    product === "paper" &&
+    renderPaperOffConsent !== undefined &&
+    permitsOwnerBetaPaperOffConsent(session)
+  ) {
+    return renderPaperOffConsent();
+  }
   if (!permitsOwnerBetaProduct(session, product)) {
     if (
       session.role === "owner" &&

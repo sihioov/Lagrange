@@ -34,6 +34,8 @@ pub async fn session_info(State(state): State<ApiState>, session: Session) -> Re
             auth_time_secs: session.0.auth_time_secs,
             owner_beta_access_mode: state.cfg.owner_beta_access,
             owner_beta_paper_mode: state.cfg.owner_beta_paper,
+            owner_beta_paper_off_consent_enabled: session.actor().is_owner()
+                && state.cfg.allows_paper_off_consent(),
         }),
     )
         .into_response()

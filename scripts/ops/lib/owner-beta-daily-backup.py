@@ -916,6 +916,9 @@ class SimulationStorage(Storage):
         return simulation.verify_simulation_archive(stream, self.limits, self.simulation_binding,
                                                      profile=profile)
 
+    def verify_daily_archive_references(self, manifest, database):
+        files.database_references(manifest, database)
+
     def __init__(self, values, docker, context, binding, *, tool_commit, tool_hash, verifier_root=None):
         require(bool(context.values["POSTGRES_DB"]), "DAILY_BACKUP_DATABASE")
         database = ops.database_name(context.values)
@@ -1030,7 +1033,7 @@ class SimulationStorage(Storage):
                 if combined:
                     daily_database, sim_digest = actual
                     require(daily_database == state["daily_database"], "DAILY_BACKUP_RESTORED_DATABASE")
-                    files.database_references(manifest, daily_database)
+                    self.verify_daily_archive_references(manifest, daily_database)
                 else:
                     sim_digest = actual
                 require(sim_digest == state["database_sha256"], "DAILY_BACKUP_RESTORED_DATABASE")
@@ -1328,17 +1331,22 @@ class InactiveDailySimulationStorage(SimulationStorage):
                 state["date_binding"], "PREACTIVATION_RESTORED_BINDING")
 
 
-def isolated_daily_off_sql(nightly):
+def isolated_daily_off_sql(nightly, *, role="postgres", socket_only=False):
     # Only the fixed networkless restore container runs this, after auditing the
     # original dump. The production dump and its historical epoch stay intact.
     enabled, epoch = nightly
+    require(type(enabled) is bool and type(epoch) is int and 0 <= epoch < 2**63 - int(enabled)
+            and type(role) is str and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,62}", role)
+            and (role == "postgres" or socket_only is True), "DAILY_BACKUP_NIGHTLY_BINDING")
+    transport = ("inet_server_addr() IS NOT NULL OR inet_client_addr() IS NOT NULL OR "
+                 "current_setting('listen_addresses') <> '' OR " if socket_only else "")
     old_mode = "true" if enabled else "false"
     new_epoch = epoch + int(enabled)
-    return f"""BEGIN;
+    return f"""BEGIN READ WRITE;
 SET LOCAL search_path = pg_catalog, pg_temp;
 DO $isolated$
 BEGIN
-    IF current_user <> 'postgres' OR session_user <> 'postgres' OR
+    IF current_user <> '{role}' OR session_user <> '{role}' OR {transport}
        (SELECT count(*) FROM public.owner_beta_daily_control) <> 1 OR NOT EXISTS (
          SELECT 1 FROM public.owner_beta_daily_control
          WHERE id='etf11' AND enabled IS {old_mode} AND activation_epoch={epoch}
@@ -1390,6 +1398,10 @@ class NightlyDailySimulationStorage(SimulationStorage):
     def verify_archive(self, stream, *, profile):
         return verify_bound_combined_archive(stream, self.limits, self.simulation_binding,
                                              profile=profile)
+
+    def verify_daily_archive_references(self, manifest, database):
+        pending = files.database_references(manifest, database, nightly=self.nightly)
+        require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
 
     def augment_simulation_state(self, state):
         require(state["profile"] == "daily-simulation", "DAILY_BACKUP_NIGHTLY_BINDING")
@@ -1475,10 +1487,77 @@ def inactive_verification_context(install_root, release, commit, docker, sim_doc
     simulation._handoff_stopped(context, database, docker, sim_docker, record)
 
 
+_NIGHTLY_PAPER_FENCE = object()
+
+
+class _NightlyPaperFence:
+    """Bind the configured OFF backup to the existing verified nightly drain."""
+
+    def __init__(self, token, context, release_fd, binding, config, daily_state, daily_database, stopped):
+        require(token is _NIGHTLY_PAPER_FENCE and type(context) is ops.Context
+                and type(release_fd) is int and type(daily_state) is tuple,
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+        self.context, self.release_fd, self.binding, self.config = context, release_fd, binding, config
+        self.daily_state, self._database, self._stopped = daily_state, daily_database, stopped
+
+    def matches(self, context, lock_identity):
+        return (context.commit == self.context.commit and context.release_path == self.context.release
+                and context.project == self.binding.project and context.lock_identity == lock_identity
+                and os.path.samestat(os.fstat(context.lock_fd), os.fstat(self.release_fd)))
+
+    def verify_stopped(self):
+        self._stopped()
+
+    def verify_references(self, manifest):
+        pending = files.database_references(json.loads(manifest), self._database, nightly=self.daily_state)
+        require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
+
+
+NIGHTLY_STATE_ROOT = "/var/lib/lagrange/backup-state/nightly-simulation"
+
+
+def configured_nightly_workspace(args, context, backup):
+    state_date = args.nightly_state_date
+    if state_date is None:
+        require(args.mode == "preflight", "DAILY_BACKUP_NIGHTLY_BINDING")
+        return NIGHTLY_STATE_ROOT
+    install.trading_date(state_date)
+    workspace = NIGHTLY_STATE_ROOT + "/" + state_date
+    code = "DAILY_BACKUP_NIGHTLY_BINDING"
+    with install.root_directory(workspace) as fd:
+        install.directory_info(fd, 0, 0, 0o700)
+        raw = install.read_file(fd, "claim.json", gid=0, mode=0o600, maximum=8192)
+        claim = install.json_bytes(raw)
+    config = install.read_root_file(args.config_file, gid=0, mode=0o600, maximum=32768)
+    sequencer = install.read_root_file(context.release + "/scripts/ops/preupgrade-simulation-backup.py",
+                                       maximum=256 * 1024)
+    require(type(claim) is dict and claim.keys() ==
+            {"schema", "date", "config", "sequencer_sha256", "started_at_utc"}
+            and files.canonical(claim) + b"\n" == raw
+            and claim["schema"] == "lagrange-nightly-simulation-backup-claim-v1"
+            and claim["sequencer_sha256"] == "sha256:" + hashlib.sha256(sequencer).hexdigest()
+            and claim["date"] == state_date and claim["config"] == {
+                "schema": "lagrange-nightly-simulation-backup-v2",
+                "backup_profile": "daily-simulation",
+                "application_commit": context.commit,
+                "tool_commit": backup.get("DAILY_BACKUP_TOOL_COMMIT"),
+                "config_file": args.config_file,
+                "config_sha256": "sha256:" + hashlib.sha256(config).hexdigest(),
+                "expected_db_first_session": args.expected_db_first_session,
+                "expected_config_first_session": args.expected_config_first_session,
+            }, code)
+    return workspace
+
+
 def inactive_simulation_run(operation, context, database, docker, sim_docker, backup, *,
                             tool_commit, tool_hash, verifier_root, action, expected_dates,
-                            stopped_worker_commit, nightly=None):
+                            stopped_worker_commit, nightly=None, paper_profile=None,
+                            release_fd=None, expected_paper_archive=None, paper_workspace=None):
     nightly_combined = nightly is not None
+    configured_off = paper_profile == "CONFIGURED_OFF"
+    require((not configured_off and expected_paper_archive is None and paper_workspace is None)
+            or (configured_off and nightly_combined and type(release_fd) is int
+                and paper_workspace is not None), "DAILY_BACKUP_NIGHTLY_BINDING")
     require(operation.required and operation.binding is not None and
             operation.source_release == operation.target_release, "PREACTIVATION_SIMULATION_CONFIG")
     inactive_simulation_tool(context, verifier_root)
@@ -1529,8 +1608,9 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
 
     daily_before = daily_audit()  # All inactive-Daily conditions precede any signal.
     if verify:
-        sets = storage.sets()
-        require(all(entry.get(profile_key) for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
+        if not configured_off:
+            sets = storage.sets()
+            require(all(entry.get(profile_key) for entry in sets), "PREACTIVATION_SEPARATE_ROOT")
         ids = simulation._api_ids(docker, 15)
         require(len(ids) == 1, "PREACTIVATION_API")
         api, running, policy = simulation._api_observe(docker, operation.project, context.commit,
@@ -1541,7 +1621,8 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
     else:
         require(action in {"inactive-simulation-backup", "nightly-combined-backup"},
                 "PREACTIVATION_ARGUMENTS")
-        inactive_simulation_capacity(storage, nightly_combined=nightly_combined)
+        if not configured_off:
+            inactive_simulation_capacity(storage, nightly_combined=nightly_combined)
         process = simulation.runtime.capture(sim_docker, operation.binding)
         if process.running:
             simulation.verify_runtime_policy(docker, sim_docker, operation.binding,
@@ -1571,6 +1652,14 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
                                 context.images["api-server"], api, 15)
         simulation.verify_drained(sim_docker, operation.binding, worker.generation)
 
+    if configured_off:
+        require(verify == (expected_paper_archive is not None), "DAILY_BACKUP_NIGHTLY_BINDING")
+        fence = _NightlyPaperFence(_NIGHTLY_PAPER_FENCE, context, release_fd, binding, config,
+                                  nightly, before[0], unchanged)
+        return _paper_backup_module().run_configured_off_nightly(
+            ops.paper_prefix_context(context), release_fd, fence, int(backup["MAX_TOTAL_BYTES"]), backup,
+            workspace=paper_workspace, verify=verify, expected_archive=expected_paper_archive)
+
     if verify:
         require(sets, "PREACTIVATION_NO_COMPLETE_SET")
         storage.verify_simulation(Path(storage.root) / sets[-1]["name"])
@@ -1583,9 +1672,10 @@ def inactive_simulation_run(operation, context, database, docker, sim_docker, ba
             with simulation_snapshot(operation.binding, operation.install_root, storage.limits,
                     data_root=backup["DATA_ROOT"], daily_roots=roots(binding, operation.install_root)) as snapshot:
                 require(audit() == before, "DAILY_BACKUP_SOURCE_DATABASE_CHANGED")
-                pending = files.database_references(json.loads(snapshot.manifest()), before[0])
                 if nightly_combined:
-                    require(not any(pending.values()), "DAILY_BACKUP_NIGHTLY_PENDING")
+                    storage.verify_daily_archive_references(json.loads(snapshot.manifest()), before[0])
+                else:
+                    files.database_references(json.loads(snapshot.manifest()), before[0])
                 source, final, name = staging.enter_context(storage.capture_simulation(
                     snapshot, before[1], before[0], "daily-simulation"))
                 unchanged()
@@ -2079,8 +2169,9 @@ def main(argv=None):
     parser.add_argument("--operation", choices=("backup", "verify", "reconcile",
                         "preactivation-backup", "preactivation-verify",
                         "inactive-simulation-backup", "inactive-simulation-verify",
-                        "nightly-combined-backup", "nightly-combined-verify"), required=True)
-    parser.add_argument("--mode", choices=("plan", "preflight", "apply"), required=True)
+                        "nightly-combined-backup", "nightly-combined-verify",
+                        "nightly-combined-paper-readback"), required=True)
+    parser.add_argument("--mode", choices=("plan", "preflight", "apply", "readback"), required=True)
     parser.add_argument("--install-root", required=True)
     parser.add_argument("--application-release")
     parser.add_argument("--config-file", default="/etc/lagrange/production-backup.conf")
@@ -2088,6 +2179,10 @@ def main(argv=None):
     parser.add_argument("--expected-config-first-session")
     parser.add_argument("--stopped-worker-from-commit")
     parser.add_argument("--expected-nightly-daily-control")
+    parser.add_argument("--expected-nightly-paper-off", action="store_true")
+    parser.add_argument("--expected-nightly-paper-archive")
+    parser.add_argument("--expected-nightly-paper-origin")
+    parser.add_argument("--nightly-state-date")
     parser.add_argument("--paper-restart-generation", action="append",
                         help="retained STOPPED Paper backup generation (manual backup apply only)")
     parser.add_argument("--paper-restart-key", action="append",
@@ -2109,11 +2204,26 @@ def main(argv=None):
         preactivation = args.operation.startswith(("preactivation-", "inactive-simulation-"))
         nightly_combined = args.operation.startswith("nightly-combined-")
         fenced_simulation = nightly_combined or args.operation.startswith("inactive-simulation-")
-        if nightly_combined and args.mode == "apply":
+        paper_readback = args.operation == "nightly-combined-paper-readback"
+        require(paper_readback == (args.mode == "readback"), "DAILY_BACKUP_NIGHTLY_BINDING")
+        require(args.nightly_state_date is None or nightly_combined and args.mode in {"preflight", "apply"},
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+        if nightly_combined and args.mode in {"apply", "readback"}:
             nightly = ops.nightly_control(args.expected_nightly_daily_control)
         else:
             require(args.expected_nightly_daily_control is None, "DAILY_BACKUP_NIGHTLY_BINDING")
             nightly = None
+        paper_archive = args.expected_nightly_paper_archive
+        require(not args.expected_nightly_paper_off or nightly_combined and args.mode in {"apply", "readback"},
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+        require((args.expected_nightly_paper_origin is not None) == paper_readback and
+                (not paper_readback or args.expected_nightly_paper_off and
+                 re.fullmatch(r"sha256:[0-9a-f]{64}", args.expected_nightly_paper_origin)),
+                "DAILY_BACKUP_NIGHTLY_BINDING")
+        if paper_archive is not None:
+            require(args.operation == "nightly-combined-verify" and args.mode == "apply"
+                    and args.expected_nightly_paper_off
+                    and re.fullmatch(r"sha256:[0-9a-f]{64}", paper_archive), "DAILY_BACKUP_NIGHTLY_BINDING")
         expected_dates = (args.expected_db_first_session, args.expected_config_first_session)
         if preactivation:
             preactivation_dates(expected_dates)
@@ -2159,29 +2269,49 @@ def main(argv=None):
         values, overlays = ops.read_context(release, commit, "enable")
         context = ops.Context(release, commit, images, values, overlays)
         ops.reject_ambient(values)
-        backup = config_file(args.config_file, context, project, check_only=args.mode == "preflight")
+        backup = config_file(args.config_file, context, project, check_only=args.mode in {"preflight", "readback"})
         require((tool_hash is None and not (TOOL_KEYS & backup.keys())) or
                 (tool_hash is not None and backup.get("DAILY_BACKUP_TOOL_COMMIT") == Path(ROOT).name
                  and backup.get("DAILY_BACKUP_TOOL_MANIFEST") == tool_hash), "DAILY_BACKUP_TOOL")
+        if paper_readback:
+            with paper_capture_release_lock(args.install_root) as release_fd:
+                _paper_backup_module().observe_nightly_paper(
+                    ops.paper_prefix_context(context), release_fd, nightly, args.expected_nightly_paper_origin)
+            print("DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN_UNCHANGED")
+            return 0
         if args.mode == "preflight":
             with paper_capture_release_lock(args.install_root) as release_fd:
-                paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
-                                                   "preflight", int(backup["MAX_TOTAL_BYTES"]))
+                paper_context = ops.paper_prefix_context(context)
+                paper_profile = None
+                paper_origin = None
+                paper_result = None
+                if nightly_combined:
+                    paper_profile = _paper_backup_module().inspect_nightly_paper(paper_context, release_fd)
+                else:
+                    paper_result = select_paper_backup(paper_context, release_fd, args.operation,
+                                                       "preflight", int(backup["MAX_TOTAL_BYTES"]))
                 if fenced_simulation:
                     binding, daily_config = simulation_daily_binding(context, project, args.install_root)
                     require(binding is not None, "PREACTIVATION_DAILY")
                     docker = runtime.Docker()
                     database = ops.Database(docker, project, commit, images["db-migrate"])
                     if nightly_combined:
-                        database.nightly_state(release, commit, values, expected_dates[0])
+                        state = database.nightly_state(release, commit, values, expected_dates[0])
+                        if paper_profile == "CONFIGURED_OFF":
+                            paper_origin = _paper_backup_module().preflight_nightly_paper(
+                                paper_context, release_fd, state,
+                                workspace=configured_nightly_workspace(args, context, backup),
+                                storage_values=backup)
+                            require(type(paper_origin) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", paper_origin),
+                                    "DAILY_BACKUP_NIGHTLY_BINDING")
                     else:
                         preactivation_date_binding(database.backup_audit(values), daily_config, expected_dates)
                     if args.operation.endswith("-backup"):
                         storage = Storage(backup, docker, context, binding)
                         storage.require_no_verifier()
-                        if nightly_combined:
+                        if nightly_combined and paper_profile != "CONFIGURED_OFF":
                             inactive_simulation_capacity(storage, nightly_combined=True)
-                        else:
+                        elif not nightly_combined:
                             inactive_simulation_capacity(storage)
             if paper_result is not None:
                 print("DAILY_BACKUP: " + paper_result.status)
@@ -2206,6 +2336,9 @@ def main(argv=None):
                 roots(binding, args.install_root)
                 install.check_state(binding.data_root, config)
             print("DAILY_BACKUP: PREFLIGHT")
+            if paper_profile == "CONFIGURED_OFF":
+                print("DAILY_BACKUP: NIGHTLY_PAPER_CONFIGURED_OFF")
+                print("DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN " + paper_origin)
             return 0
         def terminated(signum, frame):
             raise runtime.RuntimeErrorCode("DAILY_BACKUP_TERMINATED")
@@ -2220,9 +2353,22 @@ def main(argv=None):
             # Paper history/config/floor UNKNOWN raises here; never reinterpret
             # it as an unconfigured Daily/simulation/legacy installation.
             paper_action = args.operation if args.operation in {"backup", "verify", "reconcile"} else "preflight"
-            paper_result = select_paper_backup(paper_prefix_context(context), release_fd, args.operation,
-                                               paper_action, int(backup["MAX_TOTAL_BYTES"]),
-                                               storage_values=backup, **restart)
+            paper_context = ops.paper_prefix_context(context)
+            paper_profile = None
+            paper_result = None
+            paper_workspace = None
+            if nightly_combined:
+                paper_profile = _paper_backup_module().inspect_nightly_paper(paper_context, release_fd)
+                require((paper_profile == "CONFIGURED_OFF") == args.expected_nightly_paper_off,
+                        "DAILY_BACKUP_NIGHTLY_BINDING")
+                if paper_profile == "CONFIGURED_OFF":
+                    paper_workspace = configured_nightly_workspace(args, context, backup)
+                else:
+                    require(args.nightly_state_date is None, "DAILY_BACKUP_NIGHTLY_BINDING")
+            else:
+                paper_result = select_paper_backup(paper_context, release_fd, args.operation,
+                                                   paper_action, int(backup["MAX_TOTAL_BYTES"]),
+                                                   storage_values=backup, **restart)
             if paper_result is not None:
                 require(args.operation in {"backup", "verify", "reconcile"}, "PAPER_BACKUP_ACTION")
                 # Paper consumes the current-release check under this retained
@@ -2250,7 +2396,9 @@ def main(argv=None):
                     result = inactive_simulation_run(sim_context, context, database, docker, sim_docker, backup,
                         tool_commit=Path(ROOT).name, tool_hash=tool_hash, verifier_root=ROOT if tool_hash else None,
                         action=args.operation, expected_dates=expected_dates,
-                        stopped_worker_commit=args.stopped_worker_from_commit, nightly=nightly)
+                        stopped_worker_commit=args.stopped_worker_from_commit, nightly=nightly,
+                        paper_profile=paper_profile, release_fd=release_fd, expected_paper_archive=paper_archive,
+                        paper_workspace=paper_workspace)
                 elif sim_context.required:
                     result = simulation_backup_run(sim_context, context, database, docker, sim_docker, backup,
                         tool_commit=Path(ROOT).name, tool_hash=tool_hash,
@@ -2264,7 +2412,18 @@ def main(argv=None):
             if tool_hash is not None:
                 tool.read_manifest(ROOT, commit, install_root=Path(args.install_root),
                                    expected_hash=tool_hash)
-        print("DAILY_BACKUP: " + result)
+        if paper_profile == "CONFIGURED_OFF":
+            paper = _paper_backup_module()
+            require(type(result) is paper.PaperHandledResult and type(result.archive_sha256) is str
+                    and re.fullmatch(r"sha256:[0-9a-f]{64}", result.archive_sha256)
+                    and type(result.origin_sha256) is str
+                    and re.fullmatch(r"sha256:[0-9a-f]{64}", result.origin_sha256),
+                    "DAILY_BACKUP_NIGHTLY_BINDING")
+            print("DAILY_BACKUP: " + result.status)
+            print("DAILY_BACKUP: NIGHTLY_PAPER_ARCHIVE " + result.archive_sha256)
+            print("DAILY_BACKUP: NIGHTLY_PAPER_ORIGIN " + result.origin_sha256)
+        else:
+            print("DAILY_BACKUP: " + result)
         return 0
     except Exception as exc:
         paper = sys.modules.get("owner_beta_paper_backup")
@@ -2283,19 +2442,6 @@ def main(argv=None):
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
-
-
-def paper_prefix_context(context):
-    """Paper prefix context: the "disable" read that the --check inventory uses.
-
-    Paper re-reads read_context(..., "disable") and requires identical values and
-    overlays. "enable" additionally emits the KIS read overlay (compose.intraday.yml
-    under KIS_READ_COORDINATION_MODE=shared_required), which no Paper path consumes;
-    Daily keeps its own "enable" context unchanged.
-    """
-    values, overlays = ops.read_context(context.release, context.commit, "disable")
-    require(values == context.values, "DAILY_BACKUP_CONTEXT")
-    return ops.Context(context.release, context.commit, context.images, values, overlays)
 
 
 def daily_backup_run(context, docker, database, backup, args, research_mode, *, project, verifier_root,

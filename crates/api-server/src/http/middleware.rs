@@ -39,6 +39,10 @@ fn owner_beta_paper_state_path(method: &axum::http::Method, path: &str) -> bool 
     method.as_str() == "GET" && path == "/api/v1/paper/owner-beta/state"
 }
 
+fn owner_beta_paper_off_consent_path(method: &axum::http::Method, path: &str) -> bool {
+    *method == axum::http::Method::POST && path == "/api/v1/paper/owner-beta/consent"
+}
+
 /// The middleware fn mounted around the whole `/api/v1` router.
 pub async fn correlation(req: Request, next: Next) -> Response {
     let started = Instant::now();
@@ -105,6 +109,8 @@ pub async fn owner_beta_admission(
     if beta_paper_handler && is_owner {
         if !state.cfg.owner_beta_paper.is_enabled()
             && !owner_beta_paper_state_path(req.method(), req.uri().path())
+            && !(state.cfg.allows_paper_off_consent()
+                && owner_beta_paper_off_consent_path(req.method(), req.uri().path()))
         {
             return code_error("PAPER_DISABLED", "Owner-beta Paper is disabled", &rid);
         }
@@ -181,6 +187,24 @@ mod tests {
         assert!(!owner_beta_paper_handler_path(
             "/api/v1/paper/owner-betaish/state"
         ));
+    }
+
+    #[test]
+    fn off_paper_consent_exempts_only_the_exact_mutation() {
+        use axum::http::Method;
+        assert!(owner_beta_paper_off_consent_path(
+            &Method::POST,
+            "/api/v1/paper/owner-beta/consent"
+        ));
+        for (method, path) in [
+            (Method::GET, "/api/v1/paper/owner-beta/consent"),
+            (Method::POST, "/api/v1/paper/owner-beta/consent/"),
+            (Method::POST, "/api/v1/paper/owner-beta/previews"),
+            (Method::POST, "/api/v1/paper/owner-beta/state"),
+            (Method::POST, "/api/v1/paper/accounts"),
+        ] {
+            assert!(!owner_beta_paper_off_consent_path(&method, path));
+        }
     }
 
     #[test]

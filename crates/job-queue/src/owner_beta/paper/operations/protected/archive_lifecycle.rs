@@ -2,6 +2,156 @@
 //! No source anchor can become a destination capability or a new boot proof.
 use super::*;
 
+// Physical source observations remain descriptive archive members.
+pub(super) const ARCHIVED_CURRENT: &str = "paper_evidence/current-";
+pub(super) const ARCHIVED_CLAIM: &str = "paper_evidence/claim-";
+const ARCHIVED_SOURCE: &str = "paper_evidence/source-";
+
+fn source_index(leaf: &str) -> Result<&str, ErrorCode> {
+    if leaf.len() == 4 && leaf.bytes().all(|byte| byte.is_ascii_digit()) {
+        Ok(leaf)
+    } else {
+        Err(ErrorCode::WireInvalid)
+    }
+}
+
+impl Domains {
+    pub(super) fn finish_configured_off_witnesses(
+        &self,
+        paper: &Value,
+        daily: &Value,
+    ) -> Result<(), ErrorCode> {
+        use market_data::paper_source_evidence as source;
+
+        let mut budget = JournalIndex::new();
+        for (path, _) in self
+            .members
+            .range(ARCHIVED_CURRENT.to_owned()..)
+            .take_while(|(path, _)| path.starts_with(ARCHIVED_CURRENT))
+        {
+            self.check_time()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let index = path
+                .strip_prefix(ARCHIVED_CURRENT)
+                .and_then(|name| name.strip_suffix(".json"))
+                .ok_or(ErrorCode::WireInvalid)
+                .and_then(source_index)?;
+            let original = self.file(path)?;
+            budget.charge(
+                self,
+                path.len()
+                    + original.len() * 16
+                    + (source::CURRENT_SCHEMA_JSON.len() + source::SCHEMA_JSON.len()) * 4,
+            )?;
+            let current =
+                source::decode_current_envelope(original).map_err(|_| ErrorCode::WireInvalid)?;
+            let claim_path = format!("{ARCHIVED_CLAIM}{index}.json");
+            if current.status().map_err(|_| ErrorCode::WireInvalid)? == "INVALID" {
+                if self.members.contains_key(&claim_path) {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                continue;
+            }
+            let original = self.file(&claim_path)?;
+            budget.charge(self, original.len() * 16)?;
+            let claim = wire::parse_canonical(original).map_err(|_| ErrorCode::WireInvalid)?;
+            let slot = claim["slot_id"]
+                .as_str()
+                .and_then(|value| value.strip_prefix("sha256:"))
+                .filter(|_| sha(&claim["slot_id"]))
+                .ok_or(ErrorCode::WireInvalid)?;
+            let events_root = format!("{ARCHIVED_SOURCE}{index}/events/{slot}");
+            let mut events = Vec::with_capacity(3);
+            for (sequence, name) in self.children(&events_root).enumerate() {
+                self.check_time()
+                    .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+                if sequence >= 3 || name != format!("{sequence:06}.json") {
+                    return Err(ErrorCode::IdentityConflict);
+                }
+                let original = self.file(&format!("{events_root}/{name}"))?;
+                budget.charge(self, original.len() * 16 + source::SCHEMA_JSON.len() * 4)?;
+                events.push(
+                    source::decode_canonical(original, source::SOURCE_LIMIT)
+                        .map_err(|_| ErrorCode::WireInvalid)?,
+                );
+            }
+            if events.len() != 3 || source::verify_chain(&events, Some("ARMED")).is_err() {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let tail = &events[2];
+            let claim_fields = [
+                "schema",
+                "slot_id",
+                "session",
+                "due_realtime_ns",
+                "cohort",
+                "arm",
+                "reservation_id",
+                "invocation_id",
+            ];
+            if !fields(&claim, &claim_fields)
+                || claim_fields.iter().any(|key| claim[*key] != tail[*key])
+            {
+                return Err(ErrorCode::IdentityConflict);
+            }
+            let current = current.value();
+            let cohort = &current["binding"]["cohort"];
+            let process = wire::parse_canonical(self.release_bytes("paper_config/process.json")?)
+                .map_err(|_| ErrorCode::WireInvalid)?;
+            if &tail["cohort"] != cohort
+                || tail["arm"]["boot_id"] != current["boot_id"]
+                || tail["arm"]["parent"] != current["publisher"]
+                || cohort["owner_user_id"] != paper["owner_user_id"]
+                || cohort["strategy_config_id"] != paper["strategy_config_id"]
+                || cohort["cohort_sha256"] != process["daily_cohort_sha256"]
+                || cohort["release_manifest_sha256"] != process["release_manifest_sha256"]
+                || daily["enabled"] != true
+                || [
+                    "activation_epoch",
+                    "policy_sha256",
+                    "entitlement_reference",
+                    "entitlement_sha256",
+                ]
+                .iter()
+                .any(|key| cohort[*key] != daily[*key])
+            {
+                return Err(ErrorCode::IdentityConflict);
+            }
+        }
+
+        for (path, _) in self
+            .members
+            .range(ARCHIVED_CLAIM.to_owned()..)
+            .take_while(|(path, _)| path.starts_with(ARCHIVED_CLAIM))
+        {
+            self.check_time()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let index = path
+                .strip_prefix(ARCHIVED_CLAIM)
+                .and_then(|name| name.strip_suffix(".json"))
+                .ok_or(ErrorCode::WireInvalid)
+                .and_then(source_index)?;
+            self.file(&format!("{ARCHIVED_CURRENT}{index}.json"))?;
+        }
+        for (path, _) in self
+            .members
+            .range(ARCHIVED_SOURCE.to_owned()..)
+            .take_while(|(path, _)| path.starts_with(ARCHIVED_SOURCE))
+        {
+            self.check_time()
+                .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+            let index = path
+                .strip_prefix(ARCHIVED_SOURCE)
+                .and_then(|name| name.split_once("/events/"))
+                .map(|(index, _)| index)
+                .ok_or(ErrorCode::WireInvalid)
+                .and_then(source_index)?;
+            self.file(&format!("{ARCHIVED_CURRENT}{index}.json"))?;
+        }
+        Ok(())
+    }
+}
+
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeResult {
@@ -946,5 +1096,187 @@ mod tests {
         }
         let sorted: Value = serde_json::from_slice(raw).unwrap();
         assert!(NativeResult::parse(&serde_json::to_vec(&sorted).unwrap()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod configured_off_witness_tests {
+    use super::*;
+    use market_data::paper_source_evidence as source;
+    use serde_json::json;
+    use std::io::Write;
+
+    fn original(domains: &mut Domains, path: &str, raw: &[u8], control: bool) {
+        let mut file = tempfile::tempfile().unwrap();
+        file.write_all(raw).unwrap();
+        let record = serde_json::to_vec(&json!({
+            "path": path, "kind": "file", "uid": 0, "gid": if control {0} else {10001},
+            "mode": if control {0o600} else {0o440}, "size": raw.len(), "sha256": source::digest(raw),
+        })).unwrap();
+        domains
+            .observe(ArchiveOriginalMember::Member {
+                path,
+                canonical_record: &record,
+                file: Some(&file),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn configured_off_current_claim_and_armed_tail_are_descriptive_originals() {
+        let valid = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner_beta_paper_current_binding/valid-current.json"
+        ));
+        let current = source::decode_current_envelope(valid).unwrap();
+        let current = current.value();
+        let cohort = &current["binding"]["cohort"];
+        let paper = json!({"owner_user_id":cohort["owner_user_id"],"strategy_config_id":cohort["strategy_config_id"]});
+        let mut daily = cohort.clone();
+        daily["enabled"] = json!(true);
+        let session = "2026-11-26";
+        let slot = source::slot_id(cohort, session).unwrap();
+        let base = format!("paper_evidence/source-0000/events/{}", &slot[7..]);
+        let due = source::due_ns(session).unwrap();
+        let claim = json!({
+            "schema":"owner-beta-paper-source-event-v1","slot_id":slot,"session":session,"due_realtime_ns":due,
+            "cohort":cohort,"arm":{"boot_id":current["boot_id"],"generation":current["generation"],
+                "nonce":"00000000-0000-4000-8000-000000000101","parent":current["publisher"]},
+            "reservation_id":"00000000-0000-4000-8000-000000000102","invocation_id":"00000000-0000-4000-8000-000000000103",
+        });
+        let claim_raw = source::canonical(&claim).unwrap();
+        let mut domains = Domains::new(100, 2 * 1024 * 1024).configured_off_archive(true);
+        let process_raw = source::canonical(&json!({"daily_cohort_sha256":cohort["cohort_sha256"],
+            "release_manifest_sha256":cohort["release_manifest_sha256"]}))
+        .unwrap();
+        domains.release_members.insert(
+            "paper_config/process.json".into(),
+            ReleaseMember {
+                directory: false,
+                bytes: Some(process_raw.clone()),
+                hash: Some(source::digest(&process_raw)),
+            },
+        );
+        original(
+            &mut domains,
+            "paper_evidence/current-0000.json",
+            valid,
+            false,
+        );
+        original(
+            &mut domains,
+            "paper_evidence/claim-0000.json",
+            &claim_raw,
+            true,
+        );
+        let mut previous = Value::Null;
+        for (index, kind) in ["STARTED", "ARM_INTENT", "ARMED", "FAILED"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut event = claim.clone();
+            let seconds = 120 - i64::try_from(index).unwrap();
+            event["observed"] = json!({"realtime_ns":due-seconds*1_000_000_000,
+                "monotonic_ns":(180-seconds)*1_000_000_000,"boottime_ns":(180-seconds)*1_000_000_000});
+            event["kind"] = json!(kind);
+            event["sequence"] = json!(index);
+            event["previous_sha256"] = previous;
+            event["data"] = if kind == "FAILED" {
+                json!({"code":"INTERRUPTED"})
+            } else {
+                json!({})
+            };
+            let raw = source::canonical(&event).unwrap();
+            let path = format!("{base}/{index:06}.json");
+            original(&mut domains, &path, &raw, false);
+            if index == 2 {
+                assert!(
+                    domains
+                        .finish_configured_off_witnesses(&paper, &daily)
+                        .is_ok()
+                );
+                let claim = domains
+                    .members
+                    .remove("paper_evidence/claim-0000.json")
+                    .unwrap();
+                assert!(
+                    domains
+                        .finish_configured_off_witnesses(&paper, &daily)
+                        .is_err()
+                );
+                let mut substituted: Value = serde_json::from_slice(&claim_raw).unwrap();
+                substituted["invocation_id"] = json!("00000000-0000-4000-8000-000000000104");
+                original(
+                    &mut domains,
+                    "paper_evidence/claim-0000.json",
+                    &source::canonical(&substituted).unwrap(),
+                    true,
+                );
+                assert!(
+                    domains
+                        .finish_configured_off_witnesses(&paper, &daily)
+                        .is_err()
+                );
+                domains
+                    .members
+                    .insert("paper_evidence/claim-0000.json".into(), claim);
+                let ready = domains.members.remove(&path).unwrap();
+                assert!(
+                    domains
+                        .finish_configured_off_witnesses(&paper, &daily)
+                        .is_err()
+                );
+                domains.members.insert(path, ready);
+            }
+            previous = json!(source::digest(&raw));
+        }
+        assert!(
+            domains
+                .finish_configured_off_witnesses(&paper, &daily)
+                .is_err()
+        );
+        domains
+            .members
+            .remove("paper_evidence/current-0000.json")
+            .unwrap();
+        assert!(
+            domains
+                .finish_configured_off_witnesses(&paper, &daily)
+                .is_err()
+        );
+
+        let stopped = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/owner_beta_paper_current_binding/valid-invalid-stopped.json"
+        ));
+        original(
+            &mut domains,
+            "paper_evidence/current-0000.json",
+            stopped,
+            false,
+        );
+        assert!(
+            domains
+                .finish_configured_off_witnesses(&paper, &daily)
+                .is_err()
+        );
+        domains
+            .members
+            .remove("paper_evidence/claim-0000.json")
+            .unwrap();
+        assert!(
+            domains
+                .finish_configured_off_witnesses(&paper, &daily)
+                .is_ok()
+        );
+        domains
+            .members
+            .remove("paper_evidence/current-0000.json")
+            .unwrap();
+        assert!(
+            domains
+                .finish_configured_off_witnesses(&paper, &daily)
+                .is_err()
+        );
     }
 }

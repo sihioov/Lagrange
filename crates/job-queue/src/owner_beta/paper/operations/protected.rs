@@ -49,6 +49,13 @@ const OPERATIONS_SCHEMA_PATH: &str = "/run/owner-beta-paper-ops/operations.schem
 const ARCHIVE_SCHEMA_PATH: &str = "/run/owner-beta-paper-ops/archive.schema.json";
 const MIGRATION_PATH: &str = "/run/owner-beta-paper-ops/migration-0068.up.sql";
 const AUDIT_SQL_PATH: &str = "/run/owner-beta-paper-ops/audit.sql";
+const CONFIGURED_OFF_GUEST_SQL_PATH: &str = "/run/owner-beta-paper-ops/configured-off-restore.sql";
+const CONFIGURED_OFF_GUEST_SQL_SHA256: &str =
+    "sha256:1e98caf6209f621a767c4c551f6903b1a1d9bdd251790b6a3b4bb19cbf362b38";
+const CONFIGURED_OFF_GUEST_BODY_SHA256: [&str; 2] = [
+    "ecd6a8c58d902fe35f6202d672ed76751f6694668c44b6a3ee746501b00cdb1b",
+    "ea70cbb5067b24d888db1fcd81cbdc57909bbef42202c8cf16c3ff574205d241",
+];
 const MIGRATION_PASSWORD: &str = "/run/secrets/db_migration_owner_password";
 const WORKER_PASSWORD: &str = "/run/secrets/db_worker_password";
 const MAX_DB_SELECTOR: usize = 4096;
@@ -1328,6 +1335,13 @@ async fn read_exact_result(
             .execute(&mut *connection)
             .await
             .map_err(|_| ErrorCode::CommitUnknown)?;
+        let guest_sql = if configured_off_guest_request(request)? {
+            let file = pin_configured_off_guest_sql()?;
+            verify_configured_off_guest(connection).await?;
+            Some(file)
+        } else {
+            None
+        };
         let value = sqlx::query_scalar::<_, Value>(
             "SELECT public.read_owner_beta_paper_operation_result_v1($1::text,$2::text)",
         )
@@ -1348,10 +1362,63 @@ async fn read_exact_result(
                 _ => ErrorCode::CommitUnknown,
             }
         })?;
+        if let Some(file) = guest_sql {
+            file.revalidate()
+                .map_err(|_| ErrorCode::ReaderIncompatible)?;
+        }
         ExactReadback::parse(value, request).map_err(|_| ErrorCode::WireInvalid)
     })
     .await
     .map_err(|_| ErrorCode::CommitUnknown)?
+}
+
+fn configured_off_guest_request(request: &ExactRequest) -> Result<bool, ErrorCode> {
+    if request.value["kind"] != "TRANSITION"
+        || request.value["args"]["transition"] != "RESTORED_OFF"
+    {
+        return Ok(false);
+    }
+    let original = request.value["args"]["evidence_canonical"]
+        .as_str()
+        .ok_or(ErrorCode::WireInvalid)?;
+    let receipt = wire::parse_canonical(original.as_bytes()).map_err(|_| ErrorCode::WireInvalid)?;
+    Ok(receipt["schema"] == wire::CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA)
+}
+
+fn pin_configured_off_guest_sql() -> Result<GuardedFile, ErrorCode> {
+    let (file, bytes) = read_fixed(CONFIGURED_OFF_GUEST_SQL_PATH, MAX_SOURCE_FILE_BYTES)
+        .map_err(|_| ErrorCode::EvidenceUnavailable)?;
+    if digest(&bytes) != CONFIGURED_OFF_GUEST_SQL_SHA256 {
+        return Err(ErrorCode::IdentityConflict);
+    }
+    Ok(file)
+}
+
+async fn verify_configured_off_guest(connection: &mut sqlx::PgConnection) -> Result<(), ErrorCode> {
+    let valid = sqlx::query_scalar::<_, bool>(
+        "SELECT current_user='migration_owner' AND session_user='migration_owner'
+          AND current_setting('role')='none'
+          AND inet_server_addr() IS NULL AND inet_client_addr() IS NULL
+          AND current_setting('listen_addresses')=''
+          AND NOT pg_is_in_recovery()
+          AND (SELECT count(*)=2 FROM pg_proc p
+            WHERE p.oid IN ('public.paper_0068_exact_request(text,text)'::regprocedure,
+              'public.transition_owner_beta_paper_v1(bigint,text,jsonb,text)'::regprocedure)
+            AND p.proowner='migration_owner'::regrole
+            AND encode(sha256(convert_to(p.prosrc,'UTF8')),'hex') =
+              CASE p.proname WHEN 'paper_0068_exact_request' THEN $1 ELSE $2 END
+            AND NOT EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+              WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner))",
+    )
+    .bind(CONFIGURED_OFF_GUEST_BODY_SHA256[0])
+    .bind(CONFIGURED_OFF_GUEST_BODY_SHA256[1])
+    .fetch_one(connection)
+    .await
+    .map_err(|_| ErrorCode::ReaderIncompatible)?;
+    if !valid {
+        return Err(ErrorCode::ReaderIncompatible);
+    }
+    Ok(())
 }
 
 async fn read_reset_boundary(
@@ -2320,8 +2387,15 @@ async fn readback(
     if file.revalidate().is_err() || inputs.revalidate().is_err() {
         return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
     }
-    // This path deliberately opens neither Current, Daily, worker credentials,
-    // source chains, release/ELFs nor eligibility. It only describes the original.
+    match configured_off_guest_request(request) {
+        Ok(true) if selector.host != "/run/postgresql" => {
+            return ResultWire::new(verb, Outcome::Blocked, ErrorCode::ReaderIncompatible);
+        }
+        Err(code) => return ResultWire::new(verb, Outcome::Blocked, code),
+        Ok(_) => {}
+    }
+    // Readback describes the stored request result without checking serving
+    // eligibility. Configured-OFF receipts only exist in their owned guest.
     let pool = match connect(selector, DatabaseRole::MigrationOwner).await {
         Ok(pool) => pool,
         Err(_) => return query_unknown(intent),
@@ -4541,6 +4615,19 @@ async fn maintenance_bound(
         Ok(request) => request,
         Err(code) => return dispatch_failure(verb, &root.intent, code),
     };
+    let guest_sql = if verb == Verb::RestoreOff
+        && artifact.value["schema"] == wire::CONFIGURED_OFF_RESTORE_RECEIPT_SCHEMA
+    {
+        if selector.host != "/run/postgresql" {
+            return dispatch_failure(verb, &root.intent, ErrorCode::ReaderIncompatible);
+        }
+        match pin_configured_off_guest_sql() {
+            Ok(file) => Some(file),
+            Err(code) => return dispatch_failure(verb, &root.intent, code),
+        }
+    } else {
+        None
+    };
     // Fixed dispatch publication precedes even the read-only prior checks.
     // An existing index returns UNKNOWN without opening a second SQL connection.
     if let Err(code) = originals.persist_bound_dispatch(output, inputs, Some(artifact), &request) {
@@ -4579,6 +4666,9 @@ async fn maintenance_bound(
         if let Err(code) = maintenance_backends_absent(&mut tx, &live.captured_pids).await {
             return rollback_result(tx, verb, &root.intent, code).await;
         }
+        if guest_sql.is_some() && let Err(code) = verify_configured_off_guest(&mut tx).await {
+            return rollback_result(tx, verb, &root.intent, code).await;
+        }
         let response = tokio::time::timeout(Duration::from_secs(15), async {
             if verb == Verb::Reconcile {
                 sqlx::query_scalar::<_, Value>(
@@ -4613,6 +4703,9 @@ async fn maintenance_bound(
             return rollback_result(tx, verb, &root.intent, code).await;
         }
         if inputs.revalidate().is_err() || output.revalidate().is_err() {
+            return rollback_result(tx, verb, &root.intent, ErrorCode::ReaderIncompatible).await;
+        }
+        if let Some(file) = guest_sql.as_ref() && file.revalidate().is_err() {
             return rollback_result(tx, verb, &root.intent, ErrorCode::ReaderIncompatible).await;
         }
         let mut result = ResultWire::new(verb, outcome, ErrorCode::None);

@@ -26,6 +26,143 @@ sys.modules[FILES_SPEC.name] = FILES
 FILES_SPEC.loader.exec_module(FILES)
 
 
+class ArchiveAuditSelectionTests(unittest.TestCase):
+    def test_selects_authenticated_legacy_r2_and_current_audits_and_rejects_foreign_sql(self):
+        canonical = lambda value: backup.json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        digest = lambda raw: "sha256:" + backup.hashlib.sha256(raw).hexdigest()
+        current = "sha256:" + "c"*64
+        for selected, accepted in ((backup._AUDIT_SQL_SCHEMA_0069, True),
+                                   (backup._AUDIT_SQL_SCHEMA_0070, True), (current, True),
+                                   ("sha256:" + "f"*64, False)):
+            with self.subTest(selected=selected[:12]):
+                keys = dict(installation_id="installation", generation="generation",
+                            account_id="account", control_epoch=7)
+                reader = dict(schema="owner-beta-paper-reader-capability-v1",
+                              release_manifest_sha256="sha256:" + "d"*64,
+                              audit_sql_sha256=selected)
+                reader_bytes = canonical(reader)
+                audit_bytes = canonical(dict(keys, audit_sql_sha256=selected))
+                binding = dict(keys, domain="lagrange-paper-snapshot-binding-v1",
+                               database_dump_sha256=digest(b"dump"),
+                               audit_stream_sha256=digest(b"audit"), files_sha256=digest(b"files"))
+                archive_bytes = canonical(dict(keys, schema=backup._ARCHIVE_V1, profile="paper-combined",
+                    database_dump_sha256=binding["database_dump_sha256"],
+                    files_sha256=binding["files_sha256"], audit_sha256=digest(audit_bytes),
+                    database_snapshot_sha256=digest(canonical(binding)),
+                    release_manifest_sha256=reader["release_manifest_sha256"],
+                    capability_sha256=digest(reader_bytes)))
+                raw = {}
+                def source(name, content):
+                    fd = len(raw)+1
+                    raw[fd] = content
+                    return types.SimpleNamespace(path=name, fd=fd, size=len(content),
+                                                 sha256=digest(content), revalidate=mock.Mock())
+                package = object.__new__(backup._ArchivePackage)
+                package.path = Path("/private/archive")
+                package.originals = [source(name, value) for name, value in (
+                    ("archive.json", archive_bytes), ("audit.json", audit_bytes),
+                    ("clone.dump", b"dump"), ("audit.stream", b"audit"), ("files.bundle", b"files"))]
+                sql = types.SimpleNamespace(sha256=selected, size=32, revalidate=mock.Mock())
+                capability = source("capability.json", reader_bytes)
+                files = object()
+                package.owner = types.SimpleNamespace(expected_configured_off=None,
+                    sources=[types.SimpleNamespace(sha256=current, revalidate=mock.Mock())],
+                    selection=types.SimpleNamespace(
+                        _backup_module=lambda: types.SimpleNamespace(files=files)))
+                package.ops = types.SimpleNamespace(_digest=digest, _canonical=canonical,
+                    journal=types.SimpleNamespace(_json=lambda data, _maximum: backup.json.loads(data)))
+                with mock.patch.object(backup.os, "pread", side_effect=lambda fd, *_: raw[fd]), \
+                     mock.patch.object(backup, "_ArchiveOriginal", side_effect=(sql, capability)):
+                    if not accepted:
+                        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DESCRIPTOR_BINDING"):
+                            package._validate_source_descriptors()
+                        continue
+                    package._validate_source_descriptors()
+                self.assertIs(package.archive_audit_sql, sql)
+                sql.revalidate.assert_called_once_with(files)
+                capability.revalidate.assert_called_once_with(files)
+
+    def test_configured_off_proof_changes_the_snapshot_binding_and_keeps_epoch_zero(self):
+        proof = dict(schema=backup._CONFIGURED_OFF_PROOF,
+                     paper_control_sha256="sha256:"+"a"*64,
+                     daily_control_sha256="sha256:"+"b"*64)
+        archive = dict(schema=backup._ARCHIVE_V2, profile=backup._CONFIGURED_OFF_PROFILE,
+                       installation_id="source", generation="archive", account_id="account",
+                       control_epoch=0, source_proof=proof)
+        binding = backup._snapshot_binding(archive, "dump", "stream", "files")
+        self.assertEqual(binding["domain"], "lagrange-paper-snapshot-binding-v2")
+        self.assertEqual(binding["source_proof"], proof)
+        self.assertEqual(backup._restore_source_epoch(archive), 0)
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DESCRIPTOR_BINDING"):
+            backup._snapshot_binding(dict(archive, drain_receipt_sha256="sha256:"+"d"*64),
+                                     "dump", "stream", "files")
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_DESCRIPTOR_BINDING"):
+            backup._snapshot_binding(dict(archive, source_proof=dict(proof, extra=True)),
+                                     "dump", "stream", "files")
+
+
+class OffConsentFloorTests(unittest.TestCase):
+    def test_real_backup_preflight_needs_exact_drift_and_skips_active_or_unfinished_state(self):
+        account = "11111111-1111-4111-8111-111111111111"
+        source = mock.Mock(return_value=b"SELECT __ACCOUNT_SQL__ WHERE __LOCAL_FLOOR__ < __CONTROL_EPOCH__ AND __REVOCATIONS__ > 0;")
+        database = mock.Mock()
+        database.execute.return_value = "OFF_CONSENT_PENDING"
+        ops = types.SimpleNamespace(journal=types.SimpleNamespace(_uuid=mock.Mock()),
+            daily=types.SimpleNamespace(Database=mock.Mock(return_value=database),
+                install=types.SimpleNamespace(read_root_file=source)))
+        live = types.SimpleNamespace(values={"OWNER_BETA_PAPER_OFF_CONSENT_ENABLED": "true",
+                                             "OWNER_BETA_ACCESS_MODE": "owner_only",
+                                             "OWNER_BETA_PAPER_MODE": "disabled"},
+            revalidate=mock.Mock(), release_path="/private/release", docker=object(),
+            project="project", commit="a"*40, images={"db-migrate": "fixture"})
+        local = types.SimpleNamespace(floor_value=1, present=True, operations=[], revalidate=mock.Mock())
+        page = {"account_id": account, "data": {"state": "OFF"}}
+        with mock.patch.object(backup, "_operations", return_value=ops):
+            prove = backup._off_consent_epoch_proof_for(live)
+            self.assertTrue(prove(local, page, 3))
+            self.assertIn("1 < 3 AND 2 > 0", database.execute.call_args.args[1])
+            database.execute.return_value = "NO"
+            self.assertFalse(prove(local, page, 3))
+            self.assertFalse(prove(local, page, 1))
+            self.assertFalse(prove(local, dict(page, data={"state": "DRAINING"}), 3))
+            local.operations = [types.SimpleNamespace(revalidate=lambda: "STOPPED")]
+            self.assertFalse(prove(local, page, 3))
+        self.assertEqual(database.execute.call_count, 2)
+        live.values.clear()
+        self.assertIsNone(backup._off_consent_epoch_proof_for(live))
+
+    def test_apply_advances_a_proved_floor_once_and_rejects_changed_local_floor(self):
+        outcome = types.SimpleNamespace(_pending_epoch=4, _local=types.SimpleNamespace(floor_value=3),
+                                        revalidate=mock.Mock())
+        status = {"inventory_closed": False}
+        @contextlib.contextmanager
+        def inventory(**_):
+            status["inventory_closed"] = False
+            try:
+                yield outcome
+            finally:
+                status["inventory_closed"] = True
+        def advance(epoch):
+            self.assertTrue(status["inventory_closed"])
+            store.epoch_floor = outcome._local.floor_value = epoch
+            outcome._pending_epoch = None
+            return epoch
+        store = types.SimpleNamespace(epoch_floor=3, advance_floor=mock.Mock(side_effect=advance))
+        live = types.SimpleNamespace(probe_history=inventory, revalidate=mock.Mock(), install_root="/private",
+                                     lock_fd=11)
+        ops = types.SimpleNamespace(journal=types.SimpleNamespace(
+            open_journal=lambda *_args, **_kwargs: contextlib.nullcontext(store)))
+        with mock.patch.object(backup, "_off_consent_epoch_proof_for", return_value=object()), \
+             mock.patch.object(backup, "_operations", return_value=ops):
+            backup._reconcile_off_consent_epoch(live)
+            backup._reconcile_off_consent_epoch(live)
+            outcome._pending_epoch = 5
+            store.epoch_floor = 6
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_EPOCH"):
+                backup._reconcile_off_consent_epoch(live)
+        store.advance_floor.assert_called_once_with(4)
+
+
 class PaperCaptureTests(unittest.TestCase):
     def test_dataset_capture_uses_only_existing_exporter_and_exact_identity(self):
         owner = object.__new__(backup._HeldPaperSnapshot)
@@ -759,6 +896,28 @@ class PaperRetainedStorageTests(unittest.TestCase):
             self.assertEqual(retained.metadata["commit"], "b" * 40)
         finally:
             retained.close()
+
+    def test_nightly_capacity_counts_existing_sets_without_rehashing_ciphers(self):
+        storage = self.storage()
+        old = self.first_publication(storage)
+        daily = self.nonpaper_sets(kinds=("inactive-simulation",))[0]
+        workspace = self.root / "date-workspace"
+        workspace.mkdir(mode=0o700)
+        retained = self.size(old) + self.size(daily)
+        storage.values["MIN_FREE_BYTES"] = 1
+        with mock.patch.object(self.ops, "_hash_fd", side_effect=AssertionError("preflight cipher read")):
+            self.assertEqual(storage.retained_size(capacity_only=True), retained)
+            backup._preflight_nightly_capacity(storage, str(workspace))
+            storage.maximum = retained + len(backup._PAPER_FORMAT) + 1
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_RETENTION_CAP"):
+                backup._preflight_nightly_capacity(storage, str(workspace))
+            storage.maximum += 1
+            storage.values["MIN_FREE_BYTES"] = os.statvfs(workspace).f_blocks * os.statvfs(workspace).f_frsize + 1
+            with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_SPACE"):
+                backup._preflight_nightly_capacity(storage, str(workspace))
+        self.assertEqual(list(workspace.iterdir()), [])
+        self.assertTrue((old / "COMPLETE").is_file())
+        self.assertTrue((daily / "COMPLETE").is_file())
 
     def test_historical_set_requires_own_canonical_identity_and_member_hashes(self):
         old = self.first_publication(self.storage("a" * 40))
