@@ -445,6 +445,37 @@ class NightlyTests(unittest.TestCase):
         self.assertEqual(result_path.read_bytes(), result)
         self.assertEqual((self.run_path / nightly.PROGRESS).read_bytes(), progress)
 
+    def test_combined_early_refusal_recovery_preserves_acknowledgment(self):
+        case = self.connect_sequencer()
+        self.config.update(schema=nightly.COMBINED_CONFIG_SCHEMA, backup_profile="daily-simulation",
+                           expected_db_first_session=self.config["expected_config_first_session"])
+        self.write_config()
+        case.configured_paper = True
+        case.combined_fixture(enabled=False)
+        child = self.child
+
+        def new_consent_before_apply(argv, *args):
+            if "--apply" in argv:
+                case.paper_proof = "sha256:" + "1"*64
+            return child(argv, *args)
+
+        self.child = new_consent_before_apply
+        self.assertIn("NIGHTLY_CHILD_APPLY", self.invoke("--apply")[2])
+        path = self.run_path / nightly.PROGRESS
+        before = path.read_bytes()
+        self.assertEqual(nightly.load_record(before, "TEST")["steps"], {})
+        args = [arg for arg in self.calls[1][0][5:] if arg != "--nightly"]
+        for option in ("--expected-nightly-paper-profile", "--expected-nightly-paper-origin"):
+            index = args.index(option)
+            del args[index:index + 2]
+        args.extend(("--step", "recover"))
+        for _ in range(2):
+            self.assertEqual(case.run_tool(args), (0, "PREUPGRADE_BACKUP: RECOVERED\n", ""))
+            self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(self.invoke("--acknowledge", self.date)[0], 0)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertEqual(case.mutations(), [])
+
     def test_malformed_credential_preflight_is_durably_recorded_before_any_child(self):
         original = self.credential.read_bytes()
         self.credential.chmod(0o600)

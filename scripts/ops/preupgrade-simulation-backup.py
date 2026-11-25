@@ -1261,9 +1261,14 @@ class Sequencer:
     def verify_manual_combined_recovery(self, record):
         # This observes the operator's recovered originals and starts nothing.
         require(self.args.step == "recover" and "nightly" in record, NIGHTLY_ERROR)
+        steps = record["steps"]
+        if not steps:
+            require(set(record) == {"schema", "arguments", "steps", "observer", "beta", "nightly"}
+                    and record["observer"] is None and record["beta"] is None, NIGHTLY_ERROR)
         with self.nightly_restore_lock(record):
             if record["nightly"]:
-                live = self.check_nightly(record, resumed=self.nightly_restored_services(record))
+                resumed = self.nightly_restored_services(record) if steps else ()
+                live = self.check_nightly(record, resumed=resumed)
                 operation, binding = self.combined_operations()
                 active = record["nightly"]["daily_enabled"]
                 enabled, epoch = self.daily_state(operation)
@@ -1291,7 +1296,8 @@ class Sequencer:
             # the captured source without mutating or restarting any service.
             self.readback_nightly_paper(record, before_backup=backup is None)
             recovered["nightly_paper_origin_unchanged"] = True
-        if record["steps"] or record["nightly"].get("paper_configured_off") is not True:
+        # The scheduler acknowledges an early refusal against the original bytes.
+        if steps:
             self.progress.replace(record, recovered)
         return "RECOVERED"
 

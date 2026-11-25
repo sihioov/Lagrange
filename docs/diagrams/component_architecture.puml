@@ -445,11 +445,11 @@ daily_backup --> daily_sql : same audit inside isolated restored database
 nightly_installer --> nightly_scheduler : pin canonical entrypoint; validate scheduler history under lock before retirement
 ' evidence: scripts/ops/nightly-simulation-backup.py:439-455,460-492
 nightly_scheduler --> nightly_sequencer : exact pinned child preflight and bounded apply
-' evidence: scripts/ops/preupgrade-simulation-backup.py:786-842,1134-1161,1350-1363; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2318-2333
+' evidence: scripts/ops/preupgrade-simulation-backup.py:786-842,1134-1161,1356-1369; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612,2318-2333
 nightly_sequencer --> daily_backup : approved empty or configured OFF scope;\nverify exact archive before returning cohort
 ' evidence: scripts/ops/preupgrade-simulation-backup.py:877-893,905-925; scripts/ops/compose-release.sh:1049-1060,1087-1096
 nightly_sequencer --> daily_wrapper : same-release API-only resume;\nstart simulation only if captured
-' evidence: scripts/ops/preupgrade-simulation-backup.py:927-957,1208-1212,1314-1315
+' evidence: scripts/ops/preupgrade-simulation-backup.py:927-957,1208-1212,1320-1321
 nightly_sequencer --> simulation_operations : operator recovery verifies an interrupted worker start
 
 

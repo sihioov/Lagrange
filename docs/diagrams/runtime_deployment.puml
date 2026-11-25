@@ -353,13 +353,13 @@ package "NIGHTLY SIMULATION BACKUP — OPERATOR OPT-IN" #DDEDEA {
 nightly_timer --> nightly_drop_in : dispatch canonical service when enabled
 ' evidence: deploy/systemd/lagrange-production-backup.nightly-simulation.conf.in:10,19; scripts/ops/nightly-simulation-backup.py:439-455,460-492
 nightly_drop_in --> nightly_run : execute release-pinned controller
-' evidence: scripts/ops/nightly-simulation-backup.py:223-250,372-422,460-496; scripts/ops/preupgrade-simulation-backup.py:786-842,1350-1363
+' evidence: scripts/ops/nightly-simulation-backup.py:223-250,372-422,460-496; scripts/ops/preupgrade-simulation-backup.py:786-842,1356-1369
 nightly_run --> nightly_state : date claim; captured profile and origin;\nterminal result or manual disposition
 ' evidence: scripts/ops/preupgrade-simulation-backup.py:786-842; scripts/ops/lib/owner-beta-daily-backup.py:1604-1612; scripts/ops/lib/owner-beta-paper-backup.py:3441-3458
 nightly_run --> nightly_archive : publish independently verified encrypted set
 ' evidence: scripts/ops/preupgrade-simulation-backup.py:817-842; scripts/ops/lib/owner-beta-daily-backup.py:526,1031-1039,1604-1612; scripts/ops/lib/owner-beta-paper-backup.py:1947-1970,2014-2027
 nightly_run --> daily_restore : networkless clone before cohort return;\nPaper profile uses clone-local OFF
-' evidence: scripts/ops/preupgrade-simulation-backup.py:877-893,905-925; scripts/ops/compose-release.sh:1049-1060,1087-1096; scripts/ops/preupgrade-simulation-backup.py:927-957,1208-1212,1314-1315
+' evidence: scripts/ops/preupgrade-simulation-backup.py:877-893,905-925; scripts/ops/compose-release.sh:1049-1060,1087-1096; scripts/ops/preupgrade-simulation-backup.py:927-957,1208-1212,1320-1321
 nightly_run --> simulation_ops : resume same-release API and captured simulation;\noperator recovery verifies an interrupted worker start
 ' evidence: scripts/ops/preupgrade-simulation-backup.py:975-997,1048-1065
 nightly_run --> obr : return captured Beta with its original policy
