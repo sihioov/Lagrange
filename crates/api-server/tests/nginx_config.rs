@@ -19,7 +19,7 @@ fn nginx_market_stream_is_unbuffered_and_has_bounded_stall_timeouts() {
     let location = "= /api/v1/research/owner-beta/equity-universe-v2/market-stream";
     let block = location_block(NGINX_CONF, location);
     for directive in [
-        "proxy_pass http://api-server:8080;",
+        "proxy_pass http://api_upstream;",
         "proxy_http_version 1.1;",
         "proxy_set_header Host $http_host;",
         "proxy_set_header Connection \"\";",
@@ -59,7 +59,7 @@ fn nginx_lease_mutations_preserve_the_same_authority_as_sse() {
         "= /api/v1/research/owner-beta/equity-universe-v2/market-stream",
     );
     for block in [lease, stream] {
-        assert!(block.contains("proxy_pass http://api-server:8080;"));
+        assert!(block.contains("proxy_pass http://api_upstream;"));
         assert!(block.contains("proxy_set_header Host $http_host;"));
         assert!(block.contains("proxy_set_header X-Forwarded-Host $http_host;"));
         assert!(!block.contains("Access-Control-Allow-Origin"));
@@ -68,6 +68,25 @@ fn nginx_lease_mutations_preserve_the_same_authority_as_sse() {
     let general = location_block(NGINX_CONF, "/api/");
     assert!(general.contains("proxy_set_header Host $host;"));
     assert!(general.contains("proxy_read_timeout 300s;"));
+}
+
+#[test]
+fn nginx_keeps_api_replacements_on_the_fixed_internal_route() {
+    for directive in [
+        "upstream api_upstream {",
+        "zone api_upstream 64k;",
+        "resolver 127.0.0.11 valid=5s ipv6=off;",
+        "resolver_timeout 2s;",
+        "server api-server:8080 resolve;",
+    ] {
+        assert!(NGINX_CONF.contains(directive));
+    }
+    assert_eq!(
+        NGINX_CONF
+            .matches("proxy_pass http://api_upstream;")
+            .count(),
+        5
+    );
 }
 
 #[test]

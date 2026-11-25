@@ -44,7 +44,9 @@ sed -e "s|/run/secrets/lagrange_tls_cert|$PROBE/cert.pem|" \
     -e "s|listen 8443 ssl;|listen 127.0.0.1:8444 ssl;|" \
     -e "s|pid /tmp/nginx.pid;|pid $PROBE/nginx.pid;|" \
     -e "s|error_log /dev/stderr warn;|error_log $PROBE/logs/error.log warn;|" \
-    -e "s|http://api-server:8080|http://127.0.0.1:18080|" \
+    -e "s|server api-server:8080 resolve;|server 127.0.0.1:18080;|" \
+    -e '/^[[:space:]]*resolver 127\.0\.0\.11 valid=5s ipv6=off;$/d' \
+    -e '/^[[:space:]]*resolver_timeout 2s;$/d' \
     -e "s|http://web:3000|http://127.0.0.1:13000|" \
     "$CONF" > "$PROBE/base.conf"
 PROBE_SERVER=$(cat <<'EOF'

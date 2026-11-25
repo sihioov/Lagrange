@@ -434,6 +434,7 @@ fi
 # the inspection container. Comments about that boundary are not commands.
 # P4's operator and Source callers must travel with the immutable release.
 [ -f "$ops/lib/owner-beta-paper-lifecycle.py" ] &&
+  [ -f "$ops/lib/owner-beta-paper-serving.py" ] &&
   [ -f "$ops/test_owner_beta_paper_lifecycle.py" ] &&
   [ -f "$root/docs/runbooks/owner-beta-paper.md" ] || die 'Paper lifecycle caller missing'
 python3 - "$ops/lib/owner-beta-paper-lifecycle.py" <<'PY'

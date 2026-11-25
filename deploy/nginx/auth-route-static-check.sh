@@ -11,6 +11,11 @@ test -f "$conf"
 test -f "$compose"
 test -f "$env_example"
 
+grep -Fxq '    upstream api_upstream {' "$conf"
+grep -Fxq '        resolver 127.0.0.11 valid=5s ipv6=off;' "$conf"
+grep -Fxq '        server api-server:8080 resolve;' "$conf"
+test "$(grep -Fc 'proxy_pass http://api_upstream;' "$conf")" -eq 5
+
 auth_line="$(grep -nF 'location ^~ /auth/ {' "$conf" | cut -d: -f1)"
 login_line="$(grep -nF 'location = /auth/login {' "$conf" | cut -d: -f1)"
 fallback_line="$(grep -nF 'location / {' "$conf" | tail -n1 | cut -d: -f1)"
@@ -25,7 +30,7 @@ login_block="$(awk -v start="$login_line" -v end="$auth_line" \
 for required in \
   'limit_req zone=auth_login burst=3 nodelay;' \
   'limit_req_status 429;' \
-  'proxy_pass http://api-server:8080;' \
+  'proxy_pass http://api_upstream;' \
   'proxy_set_header X-Real-IP $remote_addr;' \
   'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
   'proxy_pass_header Location;' \
@@ -50,7 +55,7 @@ if grep -Fq 'limit_req' <<<"$auth_block"; then
   exit 1
 fi
 for required in \
-  'proxy_pass http://api-server:8080;' \
+  'proxy_pass http://api_upstream;' \
   'proxy_set_header Host $host;' \
   'proxy_set_header X-Real-IP $remote_addr;' \
   'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \

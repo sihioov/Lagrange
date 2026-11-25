@@ -7,8 +7,10 @@ custody and fail closed unless run as Linux root.
 """
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import importlib.util
+import io
 import os
 from pathlib import Path
 import shutil
@@ -56,6 +58,99 @@ class PaperBackupSelectionRootTests(unittest.TestCase):
         os.chown(path, 0, 0)
         os.chmod(path, mode)
         return path
+
+    def test_serving_originals_survive_actual_locked_selection_and_isolated_restore(self):
+        spec = importlib.util.spec_from_file_location(
+            "paper_serving_test_lifecycle",HERE / "lib/owner-beta-paper-lifecycle.py")
+        lifecycle = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = lifecycle
+        spec.loader.exec_module(lifecycle)
+        serving = lifecycle._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+        j = lifecycle.journal
+        generation = "00000000-0000-4000-8000-000000000501"
+        account = "00000000-0000-4000-8000-000000000502"
+        manifest = j._sha(b"release fixture")
+        proposal = b'{"public_fixture":true}'
+        example = {"Id":"a"*64,"Image":manifest,"Created":"2026-11-01T00:00:00Z",
+                   "RestartCount":0,"StartedAt":"2026-11-01T00:00:01Z"}
+        limits = FILES.Limits(8 * 1024 * 1024)
+        for variant in ("configured", "attended"):
+            with self.subTest(variant=variant), contextlib.ExitStack() as held:
+                root = self.temp / variant
+                root.mkdir(mode=0o700)
+                lock = os.open(root / j.LOCK_NAME, os.O_RDWR|os.O_CREAT|os.O_EXCL, 0o600)
+                held.callback(os.close, lock)
+                lifecycle_root = root / lifecycle.STORE
+                lifecycle_root.mkdir(mode=0o700)
+                for name in ("queries", "anchors", "selections", "staging"):
+                    (lifecycle_root / name).mkdir(mode=0o700)
+                with j.open_journal(str(root), lock, bootstrap=True) as store:
+                    intent = lifecycle._intent(store.installation_id, manifest, "ENABLE", account,
+                                               0, proposal, generation=generation)
+                    with contextlib.closing(store.bind_caller("public-fixture", j._canonical(intent))) as bound:
+                        self.assertEqual(bound.generation,generation)
+                with serving.Records(lifecycle,str(root),lock) as records:
+                    body = dict(schema="owner-beta-paper-serving-intent-v1",enable_generation=generation,
+                        account_id=account,expected_epoch=0,release_manifest_sha256=manifest,
+                        process_sha256=j._sha(proposal),installed_env_sha256=j._sha(b"env"),
+                        prior_api_generation=example,prior_proxy_generation=dict(example,Id="b"*64),
+                        prior_daily_generations={})
+                    records.write(generation, "serving-intent.json",body,create=True)
+                    if variant == "attended":
+                        records.write(generation,"serving-failed.json",
+                            {"state":"UNKNOWN","fence":None,"enable_generation":generation})
+                    else:
+                        records.write(generation,"serving-not-started.json",
+                            {"native_outcome":"BLOCKED","native_cleanup":"COMPLETE"})
+                    self.assertEqual(records.read(generation,"serving-intent.json"),body)
+                    originals = {}
+                    journal_root = root / j.PAPER_DIR
+                    operation = journal_root / "operations" / generation
+                    for path in operation.iterdir():
+                        if len(path.name) == 69:
+                            raw = path.read_bytes()
+                            self.assertEqual(path.name,j._sha(raw)[7:] + ".json")
+                            at = "paper_operations/" + str(path.relative_to(journal_root))
+                            originals[at] = raw
+                    self.assertEqual(len(originals),2)
+                    allocated = self.temp / (variant+"-projection")
+                    allocated.mkdir(mode=0o700)
+                    roots = []
+                    for name in FILES.PAPER_CLASSES:
+                        path = journal_root if name == "paper_operations" else allocated / name
+                        if path != journal_root:
+                            path.mkdir(mode=0o700)
+                        roots.append(FILES.Root(name,str(path),0,0,0o700))
+                    fd = os.open(allocated / "paper_evidence",FILES.DIRECTORY)
+                    held.callback(os.close,fd)
+                    sources = []
+                    def close_sources():
+                        for source in reversed(sources):
+                            source.close()
+                    held.callback(close_sources)
+                    SELECTION._lifecycle_originals(FILES,str(root),fd,sources,limits,lambda: None)
+                    self.assertEqual(list((allocated/"paper_evidence/lifecycle/queries").iterdir()),[])
+                    stream = io.BytesIO()
+                    with FILES.Snapshot(roots,limits,profile="paper-combined") as snapshot:
+                        snapshot.write(stream)
+                    _, retained = FILES.verify_archive(io.BytesIO(stream.getvalue()),limits,
+                        retain=tuple(originals),profile="paper-combined")
+                    self.assertEqual(retained,originals)
+                    clone = self.temp / (variant+"-guest")
+                    clone.mkdir(mode=0o700)
+                    FILES.restore_archive(io.BytesIO(stream.getvalue()),limits,str(clone),profile="paper-combined")
+                    for path, raw in originals.items():
+                        self.assertEqual((clone / path).read_bytes(),raw)
+                        self.assertEqual(stat.S_IMODE((clone / path).stat().st_mode),0o400)
+                    first = next(iter(originals.values()))
+                    changed = stream.getvalue().replace(first,b" " + first[1:],1)
+                    with self.assertRaisesRegex(FILES.SnapshotError,"DAILY_BACKUP_FILES_DIGEST"):
+                        FILES.verify_archive(io.BytesIO(changed),limits,profile="paper-combined")
+                    missing = next(path for path in operation.iterdir() if len(path.name)==69
+                                   and j._json(path.read_bytes())["phase"]=="intent")
+                    missing.unlink()
+                    with self.assertRaisesRegex(lifecycle.LifecycleError,"PAPER_SERVING_RECEIPT"):
+                        records.read(generation,"serving-intent.json")
 
     def test_retained_original_copies_exact_bytes_and_safe_metadata(self):
         path = self.source_file()

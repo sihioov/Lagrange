@@ -3720,17 +3720,112 @@ def _stopped_originals(ops, operation, stopped):
     return inventory, read(inventory["backend_observation_sha256"]), read(inventory["launch_fence_sha256"])
 
 
-def _backup_history(ops, live, operations, account, current, restart):
+def _completed_nonmaintenance(live, operation, account, current):
+    """Require a genuine original lifecycle receipt before excluding it from SQL maintenance order."""
+    ops = _operations(live)
+    lifecycle = ops._load_local("owner_beta_paper_lifecycle", "owner-beta-paper-lifecycle.py")
+    purpose = operation._intent["purpose"]
+    _require(operation._bound and purpose in {"CONFIGURE", "ENABLE", "RECOVERY"}
+             and ops.journal._next_action_sequence(operation._fd) == 1,
+             "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    with contextlib.closing(operation._journal.open_custody(operation.generation, 0)) as original:
+        with ops.open_custody_context(live.context, live.lock_fd) as reader:
+            with reader.invoke("readback", original) as call:
+                wire, raw = call.result, call.readback_artifact()
+                checked = lifecycle._exact_readback(raw, original._sql)
+                expected_kind = "CONFIGURE" if purpose == "CONFIGURE" else "TRANSITION"
+                _require(wire["outcome"] == "REPLAY" and wire["generation"] == operation.generation
+                         and wire["event_id"] == checked["event_id"] and wire["control_epoch"] == current[0]
+                         and wire["artifact_sha256"] == ops._digest(raw)
+                         and checked["status"] == "COMMITTED" and checked["kind"] == expected_kind
+                         and checked["account_id"] == account
+                         and (checked["current_epoch"], checked["current_state"]) == current,
+                         "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+            _require(call._cleanup_state == "REMOVED" and call._closed and not call._preserve,
+                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    operation.revalidate()
+    live.revalidate()
+
+
+def _combined_backup_successor(ops, live, original, fence, successor, current):
+    """Authenticate an edge to the next BACKUP without changing its historical head."""
+    root, child = original._intent, successor._intent
+    _require(successor._bound and child["purpose"] == "BACKUP"
+             and child["scope"] == "COMBINED_BACKUP"
+             and child["predecessor_generation"] == original.generation
+             and child["installation_id"] == root["installation_id"]
+             and child["account_id"] == root["account_id"]
+             and child["release_manifest_sha256"] == root["release_manifest_sha256"]
+             and child["expected_epoch"] == child["local_epoch_floor"] == fence,
+             "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    head = successor._last[3]
+    if head["stage"] == "STOPPED":
+        # The ordinary pending loop checks this child's own immutable STOPPED
+        # evidence, current SQL readback and its unique successor or explicit
+        # restart selection. Every accepted edge increases the fenced epoch.
+        _require(head["control_epoch"] == fence + 1, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        return
+    _require(head["stage"] == "SNAPSHOT", "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    off = _numbered_stage(ops, successor, head["sequence"] - 1)
+    _require(off["stage"] == "OFF_COMMITTED"
+             and head["control_epoch"] == off["control_epoch"] == fence + 2
+             and ops.journal._next_action_sequence(successor._fd) == off["sequence"] - 1,
+             "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    _verify_restart_commit(live, successor, _numbered_stage(ops, successor, 1), 0, "begin", current)
+    _verify_restart_commit(live, successor, off, off["sequence"] - 2, "off", current)
+
+
+def _failed_start_predecessor(ops, live, pending, operations, current, selected):
+    lifecycle = ops._load_local("owner_beta_paper_lifecycle", "owner-beta-paper-lifecycle.py")
+    serving = lifecycle._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+    selected_stop = None
+    for original in pending:
+        journal = original._journal
+        _require(journal._callers is not None, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        journal._scan_callers()
+        names = os.listdir(journal._callers)
+        _require(len(names) <= 4096, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        keys = []
+        for name in names:
+            binding = ops.journal._validate_caller(
+                ops.journal._read_named(journal._callers, name, 0o400, ops.journal.MAX_SMALL), journal.installation_id)
+            if binding["generation"] == original.generation and binding["caller_key"].startswith("serving-failure:"):
+                keys.append(binding["caller_key"].removeprefix("serving-failure:"))
+        _require(len(keys) == 1, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        enable_generation = keys[0]
+        ops.journal._uuid(enable_generation)
+        children = [item for item in operations if item._intent["predecessor_generation"] == original.generation]
+        _require(len(children) <= 1 and (children or selected == enable_generation),
+                 "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+        head = serving.validate_attended_selection(lifecycle, live, enable_generation, original, current if not children else None)
+        _verify_restart_commit(live, original, head, 0, "begin", current)
+        if children:
+            _combined_backup_successor(ops, live, original, head["control_epoch"], children[0], current)
+        elif selected == enable_generation:
+            selected_stop = original.generation
+    _require(selected is None or selected_stop is not None, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
+    return selected_stop
+
+
+def _backup_history(ops, live, operations, account, current, restart, *, failed_start=None):
     generations = {original.generation: original for original in operations}
     _require(len(generations) == len(operations), "PAPER_BACKUP_PREDECESSOR")
     pending = []
+    pending_start = []
     for original in operations:
         original.revalidate()
+        if original._last is None and original._intent["purpose"] in {"CONFIGURE", "ENABLE", "RECOVERY"}:
+            _completed_nonmaintenance(live, original, account, current)
+            del generations[original.generation]
+            continue
         _require(original._last is not None, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
         _require(original._intent["account_id"] == account, "PAPER_BACKUP_PREDECESSOR")
         head = original._last[3]
         if head["stage"] == "STOPPED":
             pending.append(original)
+            continue
+        if head["stage"] == "FENCED" and original._intent["purpose"] == "STOP":
+            pending_start.append(original)
             continue
         _require(head["stage"] in {"OFF_COMMITTED", "SNAPSHOT"}, "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
         if head["stage"] == "SNAPSHOT":
@@ -3783,23 +3878,17 @@ def _backup_history(ops, live, operations, account, current, restart):
             _require(current == (fence, "DRAINING") and root["release_manifest_sha256"] == live.manifest_sha256,
                      "PAPER_BACKUP_RESTART_PREDECESSOR")
         else:
-            successor = children[0]
-            child, snapshot = successor._intent, successor._last[3]
-            off_stage = _numbered_stage(ops, successor, snapshot["sequence"] - 1)
-            _require(successor._bound and child["purpose"] == "BACKUP" and child["scope"] == root["scope"]
-                     and child["installation_id"] == root["installation_id"]
-                     and child["release_manifest_sha256"] == root["release_manifest_sha256"]
-                     and child["expected_epoch"] == child["local_epoch_floor"] == fence
-                     and snapshot["stage"] == "SNAPSHOT" and off_stage["stage"] == "OFF_COMMITTED"
-                     and snapshot["control_epoch"] == off_stage["control_epoch"] == fence + 2
-                     and ops.journal._next_action_sequence(successor._fd) == off_stage["sequence"] - 1,
-                     "PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED")
-            _verify_restart_commit(live, successor, _numbered_stage(ops, successor, 1), 0, "begin", current)
-            _verify_restart_commit(live, successor, off_stage, off_stage["sequence"] - 2, "off", current)
+            _combined_backup_successor(ops, live, original, fence, children[0], current)
         _verify_restart_commit(live, original, fenced, 0, "begin", current)
     if restart is not None:
         _require(any(original.generation == restart[0] for original in pending),
                  "PAPER_BACKUP_RESTART_PREDECESSOR")
+    if pending_start or failed_start is not None:
+        predecessor = _failed_start_predecessor(ops, live, pending_start, operations, current, failed_start)
+        if predecessor is not None:
+            # The later database receipt must name this exact STOP. A new,
+            # unrelated generation or a state change leaves the hold in place.
+            return set(generations), None, predecessor
     return set(generations), None if replay is None else replay.generation
 
 
@@ -3862,7 +3951,7 @@ def _reconcile_off_consent_epoch(live):
     live.revalidate()
 
 
-def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restart=None):
+def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restart=None, failed_start=None):
     """Existing backup caller prefix; only proved empty inventory returns None.
 
     Configured/unknown Paper never enters Daily fallback. Only consumed native
@@ -3875,18 +3964,21 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restar
                  and type(restart[1]) is str and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", restart[1]),
                  "PAPER_BACKUP_RESTART_ARGUMENTS")
         ops.journal._uuid(restart[0])
+    if failed_start is not None:
+        _require(action == "backup" and restart is None, "PAPER_BACKUP_RESTART_ARGUMENTS")
+        ops.journal._uuid(failed_start)
     run = _CaptureRun(ops.open_context(values, lock_fd))
     live = run.live
     primary = None
     try:
-        if restart is None and action in {"backup", "reconcile"}:
+        if restart is None and failed_start is None and action in {"backup", "reconcile"}:
             _reconcile_off_consent_epoch(live)
         proof = _off_consent_epoch_proof_for(live) if action == "preflight" else None
         history = live.probe_history() if proof is None else live.probe_history(off_consent_proof=proof)
         with history as inventory:
             inventory.revalidate()
             if inventory._presence is ops._HISTORY_EMPTY:
-                _require(restart is None, "PAPER_BACKUP_RESTART_REQUIRED")
+                _require(restart is None and failed_start is None, "PAPER_BACKUP_RESTART_REQUIRED")
                 return None
             _require(inventory._configured, "PAPER_BACKUP_CONFIGURATION_UNKNOWN")
             page = ops._json(inventory._pages[0][1], ops.MAX_PAGE)
@@ -3895,8 +3987,10 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restar
                 inventory.revalidate()
                 return PaperHandledResult("PREFLIGHT")
             if action != "verify":
-                generations, replay = _backup_history(
-                    ops, live, inventory._local.operations, account, (epoch, page.get("data", {}).get("state")), restart)
+                selected = ({} if failed_start is None else {"failed_start": failed_start})
+                history = _backup_history(ops, live, inventory._local.operations, account,
+                    (epoch, page.get("data", {}).get("state")), restart, **selected)
+                generations, replay = history[:2]
                 if replay is not None:
                     return PaperHandledResult("BACKUP_RESTART_RECORDED", replay)
         if action=="verify":
@@ -3914,7 +4008,13 @@ def run_locked(context, lock_fd, action, maximum, *, storage_values=None, restar
         projection = Path(__file__).resolve().parents[3] / "docs/contracts/owner-beta-paper-audit-projection-v1.json"
         _require(projection.is_file(), "PAPER_BACKUP_TOOL_COHORT_INCOMPLETE")
         run.space = reserve_capture(live)
-        if restart is None:
+        if failed_start is not None:
+            predecessor = _latest_predecessor(live, account, epoch, generations, restart=history[2])
+            _require(predecessor == history[2], "PAPER_BACKUP_RESTART_PREDECESSOR")
+            lifecycle = ops._load_local("owner_beta_paper_lifecycle", "owner-beta-paper-lifecycle.py")
+            serving = lifecycle._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+            serving.clear_unstarted(lifecycle, live, failed_start)
+        elif restart is None:
             predecessor = _latest_predecessor(live, account, epoch, generations)
         else:
             predecessor = _latest_predecessor(live, account, epoch, generations, restart=restart[0])

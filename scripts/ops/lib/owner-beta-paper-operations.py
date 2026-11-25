@@ -5302,7 +5302,6 @@ if __name__ == "__main__":
     except Exception as error:
         lifecycle = sys.modules.get("owner_beta_paper_lifecycle")
         if lifecycle is not None and isinstance(error, lifecycle.LifecycleError):
-            print(error.code, file=sys.stderr)
-            raise SystemExit(4 if error.code == "CLEANUP_UNKNOWN" else 3)
+            raise SystemExit(lifecycle.report_error(error))
         print("PAPER_LIFECYCLE_REJECTED", file=sys.stderr)
         raise SystemExit(3)
