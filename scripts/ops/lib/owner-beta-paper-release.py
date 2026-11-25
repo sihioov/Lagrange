@@ -1421,6 +1421,28 @@ def _daily_operations():
     return module
 
 
+@_boundary
+def process_preflight(install_root, target_release, commit, witness_binding, lock_fd):
+    """Plan mount bindings of the installed candidate under the release lock."""
+    _release_path(install_root, target_release, commit)
+    daily = _daily()
+    daily.require_root()
+    daily.path_parts(witness_binding)
+    operations = _daily_operations()
+    preflight = operations.load_local("paper_release_preflight", "owner-beta-paper-preflight.py")
+    source = operations.load_local("paper_release_source_binding", "owner-beta-paper-evidence.py")
+    with operations.inherited_lock(install_root, lock_fd):
+        current = install_root + "/current"
+        expected_current = "releases/" + commit
+        if os.readlink(current) != expected_current:
+            _fail("PAPER_RELEASE_PREFLIGHT_CURRENT")
+        with verify(install_root, target_release, commit) as release:
+            preflight.verify(target_release, witness_binding, release, source,
+                             operations, sys.modules[__name__])
+        if os.readlink(current) != expected_current:
+            _fail("PAPER_RELEASE_PREFLIGHT_CURRENT")
+
+
 def main(argv=None):
     import argparse
 
@@ -1436,6 +1458,12 @@ def main(argv=None):
     verify_parser.add_argument("--install-root", required=True)
     verify_parser.add_argument("--target-release", required=True)
     verify_parser.add_argument("--commit", required=True)
+    process_parser = commands.add_parser("process-preflight")
+    process_parser.add_argument("--install-root", required=True)
+    process_parser.add_argument("--target-release", required=True)
+    process_parser.add_argument("--commit", required=True)
+    process_parser.add_argument("--witness-binding", required=True)
+    process_parser.add_argument("--lock-fd", required=True)
     guard_parser = commands.add_parser("reader-guard")
     guard_parser.add_argument("--install-root", required=True)
     guard_parser.add_argument("--target-release", required=True)
@@ -1462,6 +1490,11 @@ def main(argv=None):
                       args.manifest_sha256, process)
         elif args.command == "verify":
             verify(args.install_root, args.target_release, args.commit)
+        elif args.command == "process-preflight":
+            process_preflight(args.install_root, args.target_release, args.commit,
+                              args.witness_binding, args.lock_fd)
+            print("PAPER_PROCESS_PREFLIGHT: PASS")
+            return 0
         elif args.command == "history-preflight":
             outcome = history_preflight(args.install_root, args.target_release, args.commit,
                                         _lock_fd_argument(args.lock_fd))

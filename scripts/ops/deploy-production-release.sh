@@ -27,6 +27,7 @@ daily_config_source_seen=0
 daily_mode=disabled
 simulation_config_source=
 paper_process_binding_source=
+paper_witness_binding=
 simulation_receipt_source=
 simulation_complete_source=
 simulation_inputs=0
@@ -40,12 +41,15 @@ Usage: scripts/ops/deploy-production-release.sh
        [--env-source PATH --release-manifest ABSOLUTE_PATH]
        [--daily-config-source ABSOLUTE_PATH]
        [--paper-process-binding-source ABSOLUTE_ROOT0400_PATH]
+       [--paper-witness-binding ABSOLUTE_ROOT0600_PATH]
        [--simulation-config-source PATH --simulation-receipt-source PATH
         --simulation-complete-source PATH]
 
 --dry-run  Print the immutable-release plan without reading protected inputs.
 --check    Root-only read-only validation of current and its installed trusted
            V2 manifest. It never accepts an external replacement manifest.
+           With --paper-witness-binding, render and verify the fixed future
+           Paper consumer inputs of a configured release while Paper stays OFF.
 --apply    Root-only install from an exact tracked-clean repository HEAD and
            atomically switch current. It requires a protected env source and a
            strict V2 --release-manifest; existing releases are never replaced.
@@ -136,6 +140,12 @@ while [ "$#" -gt 0 ]; do
       paper_process_binding_source=$2
       shift 2
       ;;
+    --paper-witness-binding)
+      [ "$#" -ge 2 ] && [ -z "$paper_witness_binding" ] && [ -n "$2" ] ||
+        die 'one Paper witness binding input required'
+      paper_witness_binding=$2
+      shift 2
+      ;;
     --simulation-config-source|--simulation-receipt-source|--simulation-complete-source)
       [ "$#" -ge 2 ] || die 'simulation input requires a path'
       case "$1" in
@@ -178,6 +188,11 @@ safe_absolute() {
 safe_absolute "$install_root" install-root
 release_dir=$install_root/releases/$release_commit
 current_link=$install_root/current
+
+if [ -n "$paper_witness_binding" ]; then
+  [ "$mode" = check ] || die '--paper-witness-binding requires --check'
+  safe_absolute "$paper_witness_binding" paper-witness-binding
+fi
 
 if [ "$mode" = dry-run ]; then
   cat <<EOF
@@ -449,6 +464,15 @@ if [ "$mode" = check ]; then
     --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
     --mode disabled >/dev/null || die 'simulation reader compatibility check failed'
   paper_reader_guard no-reserve
+  if [ -n "$paper_witness_binding" ]; then
+    paper_preflight=$(/usr/bin/python3 -B "$release_dir/scripts/ops/lib/owner-beta-paper-release.py" process-preflight \
+      --install-root "$install_root" --target-release "$release_dir" --commit "$release_commit" \
+      --lock-fd "$release_lock_fd" --witness-binding "$paper_witness_binding") ||
+      die 'Paper process mount preflight failed'
+    [ "$paper_preflight" = 'PAPER_PROCESS_PREFLIGHT: PASS' ] ||
+      die 'Paper process mount preflight result is invalid'
+    printf '%s\n' "$paper_preflight"
+  fi
   echo "PRODUCTION_RELEASE_CHECK: PASS commit=$release_commit manifest=installed-v2"
   exit 0
 fi
