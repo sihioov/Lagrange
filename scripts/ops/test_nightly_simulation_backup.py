@@ -215,9 +215,12 @@ class NightlyTests(unittest.TestCase):
     def test_failed_child_blocks_new_dates_and_ack_never_retries_day(self):
         self.fail_apply = True
         self.assertNotEqual(self.invoke("--apply")[0], 0)
+        residue = self.run_path / ".lagrange-paper-selection-fixture"
+        residue.mkdir(mode=0o700)
         self.now += dt.timedelta(days=1)
         self.assertIn("NIGHTLY_UNRESOLVED", self.invoke("--apply")[2])
         self.assertEqual(self.invoke("--acknowledge", self.date)[0], 0)
+        self.assertTrue(residue.is_dir())
         self.now -= dt.timedelta(days=1)
         self.assertIn("NIGHTLY_ALREADY_RAN", self.invoke("--apply")[2])
 

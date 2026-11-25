@@ -643,14 +643,16 @@ def _construction_identity(info):
     return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid)
 
 
-def _mkdir_private_tree(files):
+def _mkdir_private_tree(files, parent="/var/lib"):
+    _require(type(parent) is str and parent.startswith("/"), "PAPER_BACKUP_SELECTION_SPACE")
+    parts = files.safe_parts(parent[1:])
     fds, names, births = [], [], []
     tree = None
     try:
         current = os.open("/", files.DIRECTORY)
         fds.append(current)
         files.checked_parent(current)
-        for part in ("var", "lib"):
+        for part in parts:
             fd = os.open(part, files.DIRECTORY, dir_fd=current)
             fds.append(fd)
             info = files.checked_parent(fd)
@@ -669,7 +671,7 @@ def _mkdir_private_tree(files):
         births.append(_construction_identity(info))
         names.append((current, leaf))
         tree = {"fds": fds, "names": names, "births": births, "identities": None,
-                "fd": fd, "path": "/var/lib/" + leaf, "name": leaf,
+                "fd": fd, "path": parent + "/" + leaf, "name": leaf,
                 "parent": current, "class_fds": {}, "classes": None, "removed": False}
         _check_private_tree(files, tree)
         return tree

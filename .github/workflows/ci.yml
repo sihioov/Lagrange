@@ -171,6 +171,9 @@ jobs:
       - name: Verify legacy production operations fixtures
         if: ${{ !cancelled() }}
         run: sudo bash scripts/ops/production-ops-self-test.sh
+      - name: Verify configured-OFF nightly protected filesystem and lock
+        if: ${{ !cancelled() }}
+        run: sudo unshare --mount --propagation private -- /usr/bin/python3 -I -S -B scripts/ops/owner-beta-paper-nightly-sandbox-self-test.py
 
   format:
     runs-on: ubuntu-latest
