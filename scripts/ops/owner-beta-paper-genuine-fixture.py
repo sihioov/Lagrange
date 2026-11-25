@@ -3919,6 +3919,33 @@ def _fixture_dependency_details(traceback):
     return details
 
 
+def _fixture_backup_cleanup_failure(error):
+    """Read only the failure selected inside an exact backup cleanup raise."""
+    backup = sys.modules.get("owner_beta_paper_backup")
+    if (type(backup) is not types.ModuleType or type(error) is not backup.PaperBackupError
+            or error.args != ("PAPER_BACKUP_CLEANUP_UNKNOWN",)
+            or pathlib.Path(backup.__file__).resolve() != _FIXTURE_TREE_DIRS[1] / "owner-beta-paper-backup.py"):
+        return None, None
+
+    scopes = {
+        backup._HeldPaperSnapshot.close.__code__: "SOURCE_SNAPSHOT",
+        backup._ArchivePackage.close.__code__: "ARCHIVE_PACKAGE",
+    }
+    traceback = error.__traceback__
+    for _ in range(64):
+        if traceback is None:
+            break
+        if traceback.tb_next is None:
+            frame = traceback.tb_frame
+            if frame.f_globals is vars(backup):
+                scope = next((label for code, label in scopes.items() if frame.f_code is code), None)
+                if scope is not None:
+                    selected = frame.f_locals.get("failure")
+                    return scope, selected if isinstance(selected, BaseException) else None
+        traceback = traceback.tb_next
+    return None, None
+
+
 def _fixture_failure_details(error):
     # Descriptive only: bounded causes and revalidated original result bytes.
     # UUIDs, paths, messages, raw output and credentials are never projected.
@@ -3933,9 +3960,12 @@ def _fixture_failure_details(error):
             seen.add(id(current))
             record = _fixture_failure_diagnostic(current)
             record.update(_fixture_dependency_details(current.__traceback__))
+            cleanup_scope, cleanup_failure = _fixture_backup_cleanup_failure(current)
+            if cleanup_scope is not None:
+                record["cleanup_scope"] = cleanup_scope
             records.append(record)
             pending.extend((current.__cause__, current.__context__,
-                            getattr(current, "fixture_first_context", None)))
+                            getattr(current, "fixture_first_context", None), cleanup_failure))
         return {"causes": records,
                 "truncated": any(isinstance(item, BaseException) and id(item) not in seen
                                  for item in pending)}
@@ -3975,7 +4005,9 @@ def run(source_root, commit, manifest_path, deadline_ns, *, dev_code_overlay=Fal
                                  "result-replace", "attach-cancel", "cleanup"):
                         runner.fault(case)
                     runner.pre_paper_install()
+                    print("PAPER_FIXTURE_LATE_CASE=BACKUP_RESTART", flush=True)
                     runner.backup_restart()
+                    print("PAPER_FIXTURE_LATE_CASE=OFF_CONSENT_BACKUP", flush=True)
                     runner.off_consent_backup()
                     return success_result(commit, manifest, runner, dev_code_overlay=dev_code_overlay)
             finally:

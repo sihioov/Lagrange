@@ -1478,6 +1478,74 @@ class FixtureDecisionTests(unittest.TestCase):
                 child.wait(timeout=5)
             child.stdout.close()
 
+    def test_backup_cleanup_diagnostic_keeps_selected_nested_failure_and_redacts(self):
+        backup = fixture.driver._paper_backup()
+        owner = object.__new__(backup._HeldPaperSnapshot)
+        original_docker = object()
+        owner.context = types.SimpleNamespace(docker=original_docker)
+        owner.ops = types.SimpleNamespace(_StopDocker=mock.Mock(return_value=object()))
+        owner._custody = types.SimpleNamespace(deadline=object())
+        owner._closed = owner._selection_taken = owner._poisoned = False
+        owner.selected = None
+        dump = owner.local_dump = mock.Mock()
+        dump.close.side_effect = TimeoutError("DISCARDED_DUMP_PRIVATE_SENTINEL")
+        package = owner.package = object.__new__(backup._ArchivePackage)
+        package.owner = owner
+        package.closed = False
+        package.call = mock.Mock()
+        package.call.close.side_effect = OSError(5, "RETAINED_CHILD_PRIVATE_SENTINEL")
+        package.guest = mock.Mock()
+        package.guest.close.side_effect = TimeoutError("DISCARDED_GUEST_PRIVATE_SENTINEL")
+        package.process = None
+        client = mock.Mock()
+        client.close.side_effect = PermissionError(13, "DISCARDED_CLIENT_PRIVATE_SENTINEL")
+        owner.clients = [client]
+
+        with self.assertRaisesRegex(backup.PaperBackupError, "PAPER_BACKUP_CLEANUP_UNKNOWN") as raised:
+            try:
+                owner.close()
+            except backup.PaperBackupError as error:
+                details = fixture._fixture_failure_details(error)
+                raise
+
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+        self.assertTrue(owner._poisoned)
+        self.assertFalse(owner._closed)
+        self.assertIs(owner.context.docker, original_docker)
+        for resource in (dump, package.call, package.guest, client):
+            resource.close.assert_called_once_with()
+        first, second, retained = details["causes"]
+        self.assertEqual(first["cleanup_scope"], "SOURCE_SNAPSHOT")
+        self.assertEqual(second["cleanup_scope"], "ARCHIVE_PACKAGE")
+        self.assertEqual((retained["kind"], retained["errno"]), ("OSError", 5))
+        self.assertNotIn(b"PRIVATE_SENTINEL", fixture.canonical(details))
+
+    def test_backup_cleanup_diagnostic_ignores_foreign_frame_and_missing_failure(self):
+        backup = fixture.driver._paper_backup()
+        failure = OSError(5, "FOREIGN_PRIVATE_SENTINEL")
+        try:
+            raise backup.PaperBackupError("PAPER_BACKUP_CLEANUP_UNKNOWN")
+        except backup.PaperBackupError as error:
+            foreign = fixture._fixture_failure_details(error)
+        self.assertEqual(len(foreign["causes"]), 1)
+        self.assertNotIn("cleanup_scope", foreign["causes"][0])
+
+        package = object.__new__(backup._ArchivePackage)
+        package.owner = types.SimpleNamespace(_poisoned=False)
+        package.closed = False
+        package.call = package.guest = None
+        package.process = object()
+        try:
+            package.close()
+        except backup.PaperBackupError as error:
+            owned = fixture._fixture_failure_details(error)
+        else:
+            self.fail("a retained archive process must block cleanup")
+        self.assertEqual(len(owned["causes"]), 1)
+        self.assertEqual(owned["causes"][0]["cleanup_scope"], "ARCHIVE_PACKAGE")
+        self.assertNotIn(b"FOREIGN_PRIVATE_SENTINEL", fixture.canonical(owned))
+
     def test_main_emits_closed_error_diagnostic_after_generic_marker(self):
         output = io.StringIO()
         args = ["--source-root", "/fixture/source", "--commit", "a" * 40,
