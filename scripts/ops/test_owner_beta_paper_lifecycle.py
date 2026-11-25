@@ -303,6 +303,7 @@ class UndispatchedEnableTests(unittest.TestCase):
                 original=(operation.generation,operation.intent_sha256,action._binding_bytes,action._artifact_bytes)
                 action.close();operation.close()
                 owner=object.__new__(m.Lifecycle)
+                owner._enable_plan=None
                 owner.actions=[];owner.operations=[];owner.imports=[]
                 owner._journal=mock.Mock(return_value=store);owner.revalidate=mock.Mock()
                 owner.context=types.SimpleNamespace(manifest_sha256=H)
@@ -472,5 +473,275 @@ class RetainedAnchorSelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(m.LifecycleError,'LIFECYCLE_LATE_ANCHOR'):
                 inputs.anchor_originals(selection(),tuple(originals[:-1]+[ops._canonical(late)]))
             inputs.stack.close()
+
+
+
+class ServingHandoffTests(unittest.TestCase):
+    def setUp(self):
+        self.module = m._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+        self.root = "/isolated/install"
+        self.context = types.SimpleNamespace(release=self.root + "/releases/" + C)
+        self.live = types.SimpleNamespace(context=self.context, install_root=self.root, manifest_sha256=H,
+            commit=C, verified=types.SimpleNamespace(), revalidate=mock.Mock(), _env_bytes=b"fixture env")
+        self.activation = self.module.Activation(G, A, 1, E, H, ops._digest(b"proposal"))
+        self.live.verified.process_sha256 = self.activation.process
+        self.request = ops._canonical(dict(schema="owner-beta-paper-exact-request-v1",kind="TRANSITION",
+            account_id=A,args=dict(expected_epoch=0,transition="ENABLE",request_key=G+":enable")))
+        self.dispatch = G,b"proposal",self.request
+        self.intent = dict(schema="owner-beta-paper-serving-intent-v1",enable_generation=G,
+            account_id=A,expected_epoch=0,release_manifest_sha256=H,process_sha256=self.activation.process,
+            prior_api_generation={"Id":"a"*64},prior_daily_generations={},prior_proxy_generation={"Id":"1"*64},
+            installed_env_sha256=ops._digest(self.live._env_bytes))
+        self.result = m.LifecycleResult("OK",b"native",b"readback",b"artifact","COMPLETE")
+        self.owner = types.SimpleNamespace(_prior_enable=mock.Mock(return_value=None),_enable_dispatch=None)
+        self.plan = mock.Mock(context=self.live,generation={"Id":"a"*64},daily_generations={},proxy={"Id":"1"*64})
+        self.files = {}
+        def write(generation, name, value, *, create=False):
+            self.assertEqual(generation,G)
+            self.assertTrue(not create or not self.files)
+            self.files[name]=value
+        self.records = mock.Mock()
+        self.records.write.side_effect=write
+        self.records.optional.side_effect=lambda generation,name:self.files.get(name)
+        self.enterContext(mock.patch.object(self.module,"Records",side_effect=lambda *a:contextlib.nullcontext(self.records)))
+        self.enterContext(mock.patch.object(ops,"open_context",side_effect=lambda *a:contextlib.nullcontext(self.live)))
+        self.enterContext(mock.patch.object(m,"open_lifecycle",side_effect=lambda *a,**k:contextlib.nullcontext(self.owner)))
+        self.make_plan=self.enterContext(mock.patch.object(self.module,"Plan",return_value=self.plan))
+        self.fresh=self.enterContext(mock.patch.object(self.module,"fresh_activation",return_value=self.activation))
+        self.read_current=self.enterContext(mock.patch.object(self.module,"current_activation",return_value=self.activation))
+        self.fence=self.enterContext(mock.patch.object(self.module,"begin_failure_fence",return_value=
+            dict(generation=I,event_id=E,epoch=2)))
+        def enable(_key):
+            self.owner._enable_plan(G,A,0,b"proposal")
+            self.owner._enable_dispatch=self.dispatch
+            return self.result
+        self.owner.enable=mock.Mock(side_effect=enable)
+
+    def call(self):
+        return self.module.serve(m,self.context,7,"owner-choice","/isolated/witness")
+
+    def test_normal_locked_entry_requires_fresh_result_and_readback(self):
+        def start(activation, current, record):
+            self.assertEqual(activation,self.activation)
+            current()
+            record("created",{"container_ids":{"api-server":"new"}})
+            return {"api-server":"new","paper-scheduler":"newer"}
+        self.plan.start.side_effect=start
+        with mock.patch.object(m,"_locked_context",return_value=contextlib.nullcontext((self.context,7))),\
+             mock.patch.object(m.daily.install,"is_commit",return_value=True),\
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(m.main(["enable","--install-root",self.root,"--caller-key","K",
+                "--witness-binding","/isolated/witness"]),0)
+        self.assertEqual(output.getvalue(),"PAPER_LIFECYCLE_OK:COMPLETE\n")
+        self.read_current.assert_called_once_with(m,self.context,7,self.dispatch,floor=True)
+        self.fence.assert_not_called()
+        self.assertIn("serving-started.json",self.files)
+        self.assertEqual(self.files["serving-intent.json"],self.intent)
+
+    def test_partial_start_preserves_intent_fences_once_and_never_claims_off(self):
+        def partial(_activation, current, record):
+            current()
+            record("paper-scheduler",{"generation":{"Id":"new-scheduler"}})
+            raise TimeoutError
+        self.plan.start.side_effect=partial
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_FENCED_DRAINING"):
+            self.call()
+        self.fence.assert_called_once()
+        self.assertIn("serving-paper-scheduler.json",self.files)
+        self.assertNotIn("serving-started.json",self.files)
+        self.assertEqual(self.files["serving-failed.json"]["state"],"FENCED_DRAINING")
+
+    def test_dispatch_and_unknown_cleanup_never_launch_and_failure_can_be_retained(self):
+        self.fresh.side_effect=m.LifecycleError("CLEANUP_UNKNOWN")
+        self.read_current.side_effect=m.LifecycleError("PAPER_SERVING_READBACK")
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_UNKNOWN"):
+            self.call()
+        self.plan.start.assert_not_called()
+        self.fence.assert_not_called()
+        self.assertEqual(self.files["serving-failed.json"]["state"],"UNKNOWN")
+
+    def test_reentry_incomplete_uses_original_already_fenced_or_fences_once(self):
+        self.owner._prior_enable.return_value=self.result
+        self.owner._prior_enable_dispatch=self.dispatch
+        self.files["serving-intent.json"]=self.intent
+        fenced={"state":"FENCED_DRAINING","enable_generation":G,
+                "fence":{"generation":I,"event_id":E,"epoch":2}}
+        for already in (False,True):
+            with self.subTest(already=already):
+                self.fence.reset_mock()
+                with mock.patch.object(self.module,"_existing_stop",return_value=fenced if already else None):
+                    with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_FENCED_DRAINING"):
+                        self.call()
+                self.assertEqual(self.fence.call_count,0 if already else 1)
+                self.assertEqual(self.files["serving-reconciled.json"],fenced)
+        self.make_plan.assert_not_called()
+        self.owner.enable.assert_not_called()
+
+    def test_historical_result_and_closed_attempt_never_authorize_relaunch(self):
+        self.owner._prior_enable.return_value=self.result
+        self.owner._prior_enable_dispatch=self.dispatch
+        self.assertIs(self.call(),self.result)
+        self.files["serving-intent.json"]=self.intent
+        self.files["serving-started.json"]={"consumers":{}}
+        self.assertIs(self.call(),self.result)
+        self.fence.assert_not_called()
+        self.make_plan.assert_not_called()
+
+    def test_unsafe_fence_state_is_not_guessed_and_no_second_begin(self):
+        self.owner._prior_enable.return_value=self.result
+        self.owner._prior_enable_dispatch=self.dispatch
+        self.files["serving-intent.json"]=self.intent
+        self.files["serving-stop-intent.json"]={"generation":I}
+        with mock.patch.object(self.module,"_existing_stop",side_effect=m.LifecycleError("unknown")):
+            with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_UNKNOWN"):
+                self.call()
+        self.fence.assert_not_called()
+
+    def test_protected_terminal_receipt_write_failure_is_reconciled_on_reentry(self):
+        self.plan.start.side_effect=TimeoutError
+        original=self.records.write.side_effect
+        def fault(generation,name,value,*,create=False):
+            if name=="serving-failed.json":
+                raise OSError
+            original(generation,name,value,create=create)
+        self.records.write.side_effect=fault
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_UNKNOWN"):
+            self.call()
+        self.assertIn("serving-intent.json",self.files)
+        self.assertNotIn("serving-failed.json",self.files)
+        self.owner._prior_enable.return_value=self.result
+        self.owner._prior_enable_dispatch=self.dispatch
+        with mock.patch.object(self.module,"_existing_stop",return_value={"state":"FENCED_DRAINING",
+                "enable_generation":G,"fence":{"generation":I,"event_id":E,"epoch":2}}):
+            with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_FENCED_DRAINING"):
+                self.call()
+        self.assertEqual(self.fence.call_count,1)
+
+
+
+
+    def test_partial_pair_routes_only_through_original_fenced_attended_recovery(self):
+        def partial(_activation, current, record):
+            current()
+            record("creating",{"mounts_sha256":{"api-server":self.module.mount_digest(m,{})}})
+            record("created",{"container_ids":{"api-server":"b"*64,"paper-scheduler":"c"*64}})
+            record("paper-scheduler",{"generation":{"Id":"c"*64}})
+            raise TimeoutError
+        self.plan.start.side_effect=partial
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_START_FAILED_FENCED_DRAINING"):
+            self.call()
+        root=dict(purpose="STOP",scope="PAPER_STOP",account_id=A,expected_epoch=1,local_epoch_floor=1,
+                  predecessor_generation=None,release_manifest_sha256=H)
+        head=dict(sequence=1,stage="FENCED",event_id=E,control_epoch=2)
+        retained=ops._canonical(dict(caller_key="serving-failure:"+G,generation=I,account_id=A,
+                                     root_intent_sha256=H))
+        store=types.SimpleNamespace(installation_id=I,_callers=8,_scan_callers=mock.Mock())
+        stop=types.SimpleNamespace(_intent=root,_last=(1,H,"FENCED",head),_bound=True,
+                                   revalidate=mock.Mock(return_value="FENCED"),_journal=store,
+                                   generation=I,intent_sha256=H)
+        self.records.read.side_effect=lambda _id,name:self.files[name]
+        backup=m._load("owner_beta_paper_backup", "owner-beta-paper-backup.py")
+        with mock.patch.object(backup,"_verify_restart_commit") as exact_fence,\
+             mock.patch.object(j,"_caller_name",return_value="caller"),\
+             mock.patch.object(j,"_validate_caller",side_effect=lambda data,_id:json.loads(data)),\
+             mock.patch.object(j,"_read_named",return_value=retained),\
+             mock.patch.object(backup.os,"listdir",return_value=["caller"]):
+            with self.assertRaisesRegex(backup.PaperBackupError,"PAPER_BACKUP_PRIOR_OPERATION_UNRESOLVED"):
+                backup._backup_history(ops,self.live,[stop],A,(2,"DRAINING"),None)
+            with self.assertRaises(m.LifecycleError):
+                backup._backup_history(ops,self.live,[stop],A,(3,"DRAINING"),None,failed_start=G)
+            phase=backup._backup_history(ops,self.live,[stop],A,(2,"DRAINING"),None,failed_start=G)
+        self.assertEqual(phase,({I},None,I))
+        exact_fence.assert_called_once_with(self.live,stop,head,0,"begin",(2,"DRAINING"))
+        # The previous API was removed by Compose. Scope removal is limited
+        # to the proved new generation that never started. The running new
+        # scheduler stays for the existing combined scope observer.
+        state=dict(Status="created",Running=False,Pid=0,StartedAt="0001-01-01T00:00:00Z")
+        api=dict(Id="b"*64,Image=H,Created="2026-11-01T00:00:00Z",RestartCount=0,State=state,Mounts=[],
+            Config={"Labels":{self.module.SERVING_LABEL:G}})
+        scheduler=dict(State={"Status":"running"})
+        self.live.docker=mock.Mock()
+        both={"api-server":api,"paper-scheduler":scheduler}
+        with mock.patch.object(self.module,"inspect_services",side_effect=[both,both,{"paper-scheduler":scheduler}]),\
+             mock.patch.object(ops,"_proc_cgroups",return_value={}):
+            self.module.clear_unstarted(m,self.live,G)
+        self.live.docker.call.assert_called_once_with(["container","rm","b"*64])
+        self.assertIn("serving-cleared-api-server.json",self.files)
+
+    def test_unstarted_foreign_generation_is_rejected_without_removal(self):
+        self.files["serving-intent.json"]=self.intent
+        self.files["serving-creating.json"]={"mounts_sha256":{"api-server":self.module.mount_digest(m,{})}}
+        self.files["serving-created.json"]={"container_ids":{"api-server":"b"*64}}
+        self.records.read.side_effect=lambda _id,name:self.files[name]
+        self.live.docker=mock.Mock()
+        value={"Id":"c"*64,"Image":H,"Created":"2026-11-01T00:00:00Z","RestartCount":0,"Mounts":[],
+               "State":{"Status":"created","Pid":0,"Running":False,"StartedAt":"0001-01-01T00:00:00Z"},
+               "Config":{"Labels":{self.module.SERVING_LABEL:G}}}
+        with mock.patch.object(self.module,"inspect_services",return_value={"api-server":value}),\
+             self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_GENERATION"):
+            self.module.clear_unstarted(m,self.live,G)
+        self.live.docker.call.assert_not_called()
+
+
+
+class ServingAuthorityTests(unittest.TestCase):
+    def setUp(self):
+        self.serving = m._load("owner_beta_paper_serving", "owner-beta-paper-serving.py")
+        process = {"account_id":A,"control_epoch":1}
+        proposal = ops._canonical(process)
+        self.pin = ops._digest(proposal)
+        self.page = ops._canonical(dict(schema="owner-beta-paper-action-v1",action="TRANSITION",outcome="OK",
+             control_epoch=1,account_id=A,data=dict(event_id=E,state="ENABLED")))
+        evidence = ops._canonical(dict(process_binding=process,process_binding_sha256=self.pin,
+                                      expected_epoch=0,new_epoch=1))
+        request = ops._canonical(dict(schema="owner-beta-paper-exact-request-v1",kind="TRANSITION",
+            account_id=A,args=dict(expected_epoch=0,transition="ENABLE",request_key=G+":enable",
+                                    evidence_canonical=evidence.decode("ascii"))))
+        self.dispatch = G,proposal,request
+        self.owner = types.SimpleNamespace(context=types.SimpleNamespace(commit=C,manifest_sha256=H,
+             verified=types.SimpleNamespace(process_sha256=self.pin)), _enable_dispatch=self.dispatch,
+             _journal=mock.Mock(return_value=types.SimpleNamespace(epoch_floor=1)),revalidate=mock.Mock())
+        self.checked = dict(schema="owner-beta-paper-exact-readback-v1",kind="TRANSITION",
+            request_sha256=ops._digest(request),status="COMMITTED",account_id=A,current_epoch=1,
+            current_state="ENABLED",event_id=E,event_epoch=1,result_canonical=self.page.decode("ascii"),
+            result_sha256=ops._digest(self.page),reset=None)
+        self.enterContext(mock.patch.object(ops.release,"_validate_process",return_value=process))
+
+    def result(self, **changed):
+        wire = dict(schema=ops.RESULT_SCHEMA,verb="enable",outcome="OK",event_id=E,generation=G,
+                    control_epoch=1,artifact_sha256=ops._digest(self.page),error_code="NONE")
+        receipt = m.LifecycleResult("OK",json.dumps(wire,separators=(",",":")).encode(),
+                                    ops._canonical(self.checked),self.page,"COMPLETE")
+        self.owner.last = receipt = m.dataclasses.replace(receipt,**changed)
+        return receipt
+
+    def test_existing_native_and_independent_check_both_bind_current_epoch(self):
+        actual = self.serving.fresh_activation(m,self.owner,self.result())
+        self.assertEqual(actual,self.serving.Activation(G,A,1,E,H,self.pin))
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_FRESH_ENABLE"):
+            self.serving.fresh_activation(m,self.owner,self.result(outcome="REPLAY"))
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_FRESH_ENABLE"):
+            self.serving.fresh_activation(m,self.owner,self.result(cleanup="UNKNOWN"))
+        self.owner._journal.return_value.epoch_floor=0
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_FRESH_ENABLE"):
+            self.serving.fresh_activation(m,self.owner,self.result())
+
+    def test_later_control_or_swapped_artifact_is_read_only_evidence(self):
+        self.checked["current_epoch"]=2
+        self.checked["current_state"]="DRAINING"
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_READBACK"):
+            self.serving.fresh_activation(m,self.owner,self.result())
+        self.checked.update(current_epoch=1,current_state="ENABLED")
+        with self.assertRaisesRegex(m.LifecycleError,"PAPER_SERVING_FRESH_ENABLE"):
+            self.serving.fresh_activation(m,self.owner,self.result(artifact=b"swapped"))
+
+    def test_edge_probe_keeps_only_the_expected_unauthenticated_http_status(self):
+        route = self.serving.routed_session_response
+        self.assertTrue(route("  HTTP/1.1 401 Unauthorized\nwget: server returned error: HTTP/1.1 401 Unauthorized\n"))
+        for value in ("", "HTTP/1.1 502 Bad Gateway\n", "HTTP/1.1 302 Found\nHTTP/1.1 401 Unauthorized\n",
+                      "HTTP/1.1 401 Unauthorized\n"+"a"*8193):
+            with self.subTest(value=value[:40]):
+                self.assertFalse(route(value))
+
 
 if __name__=='__main__':unittest.main()

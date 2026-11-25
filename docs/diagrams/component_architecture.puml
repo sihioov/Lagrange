@@ -728,11 +728,16 @@ package "R5-04 maintenance — integrated source candidate\nNOT INSTALLED / ACTI
   component "job-queue paper::operations\nprivate protected / bound / chain / wire\nRECONCILE/OFF guarded native path\nRECOVER retained source; RESTORE_OFF source wired\nENABLE readiness false; runtime acceptance OPEN" as paper_ops_native
   component "protected/archive_sandbox.rs\nno-new-privileges + TSYNC seccomp guard\nin-process restriction; not host isolation" as paper_ops_archive_sandbox
   component "owner-beta-paper-lifecycle.py\nCONFIGURE / RESET / ENABLE / RECOVER / readback\nretained owners; readiness remains false" as paper_host_lifecycle
+  component "owner-beta-paper-serving.py\nexact ENABLE readback and epoch floor\nstart paired consumers or fence failed start" as paper_serving_handoff
   folder "Lifecycle query / selection / anchor originals\n.owner-beta-paper-lifecycle; root-private\nstaging excluded from durable history" as paper_lifecycle_originals
   artifact "Temporary native historical view\nroot-owned 0700 / 0600; fixed RO alias\noriginal worker material retained" as paper_native_base_view
 }
 ' evidence: scripts/ops/lib/owner-beta-paper-operations.py:5062-5079
 paper_ops_python --> paper_host_lifecycle : operator CLI routes to per-action lifecycle owner
+' evidence: scripts/ops/lib/owner-beta-paper-lifecycle.py:955-972; scripts/ops/lib/owner-beta-paper-serving.py:662-723
+paper_host_lifecycle --> paper_serving_handoff : closed native gate; actual fresh success required
+' evidence: scripts/ops/lib/owner-beta-paper-serving.py:509-570; scripts/ops/lib/owner-beta-paper-backup.py:3948-3958
+paper_serving_handoff --> paper_ops_python : original STOP fence; explicit attended combined selection
 ' evidence: scripts/ops/lib/owner-beta-daily-operations.py:172-182,185-209
 daily_ops --> paper_ops_release : activation_binding Paper reader guard; marker-less root + held release lock\nvia _reader_guard_with_inventory (prepare / enable / locked backup)
 ' evidence: scripts/ops/lib/owner-beta-paper-release.py:1206-1221,1264-1272,1299-1305,1338-1341,1348-1366

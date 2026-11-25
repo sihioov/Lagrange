@@ -182,5 +182,46 @@ class PaperProcessPreflightTests(unittest.TestCase):
             preflight.verify(self.release, WITNESS, handle, source, operations, release)
 
 
+
+
+    def test_actual_p4_candidate_render_keeps_daily_and_guards_precise_generation(self):
+        serving = ops.load_local("paper_serving_preflight_test", "owner-beta-paper-serving.py")
+        self.env_path.write_text(self.env_path.read_text()+"OWNER_BETA_ACCESS_MODE=owner_only\n")
+        shutil.copyfile(ROOT/"deploy/compose/compose.owner-beta-daily.yml", self.compose_dir/"compose.owner-beta-daily.yml")
+        args=["--project-name",PROJECT,"--env-file",str(self.env_path),"-f",str(self.compose_dir/"compose.yml"),
+              "-f",str(self.compose_dir/"compose.owner-beta-daily.yml")]
+        environment={**self.environment,"LAGRANGE_PAPER_PREFLIGHT_RELEASE":self.release,
+                     "LAGRANGE_PAPER_PREFLIGHT_API_IMAGE":self.images["api-server"],
+                     "LAGRANGE_PAPER_PREFLIGHT_WORKER_IMAGE":self.images["paper-scheduler"],
+                     "LAGRANGE_DAILY_VERIFIED_CONFIG_SHA256":DAILY}
+        plan=object.__new__(serving.Plan)
+        def require(value,code):
+            if not value:
+                raise release.PaperReleaseError(code)
+        plan.l=types.SimpleNamespace(require=require)
+        plan.context=types.SimpleNamespace(project=PROJECT,images=self.images,release_path=self.release,
+             install_root="/opt/lagrange",values={"LAGRANGE_DATA_DIR":DATA,"LAGRANGE_ARTIFACTS_DIR":ARTIFACTS})
+        plan.env=environment
+        plan.original=json.loads(preflight._compose_config(args,environment,release._fail,services=serving.SERVICES))
+        plan.files=args+["-f",str(self.compose_dir/preflight.OVERLAY)]
+        plan.preflight=preflight
+        activation=serving.Activation(OWNER,OWNER,1,STRATEGY,self.manifest_sha,COHORT)
+        model,payload=plan.render_enabled(activation)
+        self.assertEqual(model["services"]["api-server"]["environment"]["OWNER_BETA_DAILY_MODE"],"owner_only")
+        self.assertEqual(model["services"]["api-server"]["environment"]["OWNER_BETA_ACCESS_MODE"],"owner_only")
+        self.assertEqual(model["services"]["paper-scheduler"]["labels"][serving.SERVING_LABEL],OWNER)
+        self.assertEqual(self.env_path.read_text().split("OWNER_BETA_PAPER_MODE=")[1].splitlines()[0],"disabled")
+        original_model=preflight._compose_config
+        def foreign(arguments, env, fail, **kwargs):
+            rendering=json.loads(original_model(arguments, env, fail, **kwargs))
+            rendering["services"]["paper-scheduler"]["labels"][serving.SERVING_LABEL]=STRATEGY
+            return json.dumps(rendering).encode()
+        with mock.patch.object(preflight,"_compose_config",side_effect=foreign),\
+             mock.patch.object(preflight,"no_create_options",return_value=self.bind_options),\
+             self.assertRaisesRegex(release.PaperReleaseError,"PAPER_SERVING_MODEL"):
+            plan.render_enabled(activation)
+        self.assertIn(OWNER.encode(),payload)
+
+
 if __name__ == "__main__":
     unittest.main()

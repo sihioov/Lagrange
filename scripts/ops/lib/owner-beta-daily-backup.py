@@ -2149,6 +2149,8 @@ def main(argv=None):
                         help="retained STOPPED Paper backup generation (manual backup apply only)")
     parser.add_argument("--paper-restart-key", action="append",
                         help="operator caller key for the linked Paper backup generation")
+    parser.add_argument("--paper-failed-serving-start", action="append",
+                        help="original failed ENABLE generation for attended combined backup apply")
     previous = {}
     preactivation = nightly_combined = False
     try:
@@ -2163,6 +2165,12 @@ def main(argv=None):
                     and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", keys[0]),
                     "PAPER_BACKUP_RESTART_ARGUMENTS")
             restart["restart"] = (generations[0], keys[0])
+        if args.paper_failed_serving_start is not None:
+            attempts = args.paper_failed_serving_start
+            require(args.operation == "backup" and args.mode == "apply" and not restart
+                    and len(attempts) == 1 and str(uuid.UUID(attempts[0])) == attempts[0]
+                    and uuid.UUID(attempts[0]).int != 0, "PAPER_BACKUP_RESTART_ARGUMENTS")
+            restart["failed_start"] = attempts[0]
         preactivation = args.operation.startswith(("preactivation-", "inactive-simulation-"))
         nightly_combined = args.operation.startswith("nightly-combined-")
         fenced_simulation = nightly_combined or args.operation.startswith("inactive-simulation-")

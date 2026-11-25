@@ -3228,6 +3228,79 @@ async fn paper_0067_0068_fence_reconcile_offline_readback_and_history_guard() ->
         assert_eq!(restored_readback["data"]["control_epoch"], 4);
         restored_inspect.rollback().await?;
 
+        // Same-account stock SQL used by attended P4 recovery. The host
+        // authorization remains separate from this isolated database test.
+        let stopped_generation = Uuid::new_v4();
+        let mut stop = sql_operation_intent(account, stopped_generation, Some(restore_generation), 4);
+        stop["installation_id"] = json!(restored_installation);
+        let stop_key = stop["request_key"].as_str().unwrap();
+        let stopped: Value = sqlx::query_scalar(
+            "SELECT begin_owner_beta_paper_operation_v1(4,$1,$2)",
+        )
+        .bind(&stop)
+        .bind(stop_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(stopped["control_epoch"], 5);
+        let original_stop = exact_request(
+            "BEGIN",
+            Some(account),
+            json!({"expected_epoch":4,"intent_canonical":exact_json(&stop),"request_key":stop_key}),
+        );
+        assert_exact_receipt(&db, &original_stop, &stopped).await?;
+        let fenced = exact_read(&caller, &original_stop).await?;
+        assert_eq!(fenced["account_id"], json!(account));
+        assert_eq!(fenced["current_state"], "DRAINING");
+        assert_eq!(fenced["current_epoch"], 5);
+        let before_rejected_write = operation_image(&db).await?;
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT queue_owner_beta_paper_target_v1($1,5,$2)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(hash('a'))
+            .fetch_one(&db.worker)
+            .await,
+            "40001",
+        );
+        assert_eq!(operation_image(&db).await?, before_rejected_write);
+
+        let backup_generation = Uuid::new_v4();
+        let mut backup = sql_operation_intent(account, backup_generation, Some(restore_generation), 5);
+        backup["installation_id"] = json!(restored_installation);
+        backup["purpose"] = json!("BACKUP");
+        backup["scope"] = json!("COMBINED_BACKUP");
+        let backup_key = format!("{backup_generation}:begin");
+        denied(
+            sqlx::query_scalar::<_, Value>(
+                "SELECT begin_owner_beta_paper_operation_v1(5,$1,$2)",
+            )
+            .bind(&backup)
+            .bind(&backup_key)
+            .fetch_one(&caller)
+            .await,
+            "23514",
+        );
+        backup["predecessor_generation"] = json!(stopped_generation);
+        let wider: Value = sqlx::query_scalar(
+            "SELECT begin_owner_beta_paper_operation_v1(5,$1,$2)",
+        )
+        .bind(&backup)
+        .bind(&backup_key)
+        .fetch_one(&caller)
+        .await?;
+        assert_eq!(wider["control_epoch"], 6);
+        let original_backup = exact_request(
+            "BEGIN",
+            Some(account),
+            json!({"expected_epoch":5,"intent_canonical":exact_json(&backup),"request_key":backup_key}),
+        );
+        assert_exact_receipt(&db, &original_backup, &wider).await?;
+        let wider_fence = exact_read(&caller, &original_backup).await?;
+        assert_eq!(wider_fence["account_id"], json!(account));
+        assert_eq!(wider_fence["current_state"], "DRAINING");
+        assert_eq!(wider_fence["current_epoch"], 6);
+
         let mut down_tx = caller.begin().await?;
         sqlx::query("SAVEPOINT nonempty_down")
             .execute(&mut *down_tx)
