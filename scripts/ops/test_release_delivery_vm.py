@@ -12,7 +12,10 @@ from types import SimpleNamespace
 import unittest
 from unittest import mock
 
-from scripts.ops import test_owner_beta_simulation_release as simulation_fixture
+if __package__:
+    from . import test_owner_beta_simulation_release as simulation_fixture
+else:
+    import test_owner_beta_simulation_release as simulation_fixture
 
 
 MODULE = Path(__file__).with_name("verify-release-delivery-vm.py")

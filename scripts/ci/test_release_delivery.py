@@ -6,7 +6,13 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.ci import release_delivery as delivery
+# unittest imports this file as a package module; pytest also collects it directly.
+if __package__:
+    from . import release_delivery as delivery
+    from .test_ci_contract import SHA_ACTION, action_uses, load_workflow
+else:
+    import release_delivery as delivery
+    from test_ci_contract import SHA_ACTION, action_uses, load_workflow
 
 
 class ReleaseDeliveryTests(unittest.TestCase):
@@ -44,7 +50,6 @@ class ReleaseDeliveryTests(unittest.TestCase):
                     delivery.check_ci(self.commit, "123")
 
     def test_delivery_workflow_is_main_dispatch_only(self):
-        from scripts.ci.test_ci_contract import load_workflow, SHA_ACTION, action_uses
         _, workflow = load_workflow("release-delivery.yml")
         self.assertEqual(set(workflow["on"]), {"workflow_dispatch"})
         self.assertEqual(workflow["permissions"], {})
