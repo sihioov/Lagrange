@@ -1,0 +1,101 @@
+name: Private release delivery
+
+on:
+  workflow_dispatch:
+    inputs:
+      ci_run:
+        description: Successful main CI run for the exact dispatch SHA
+        type: string
+        required: true
+      publish:
+        description: Publish verified images to the configured private store
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: release-delivery-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  delivery:
+    if: github.repository == 'sihioov/Lagrange' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    environment: release-delivery
+    permissions:
+      actions: read
+      contents: read
+      attestations: write
+      id-token: write
+    env:
+      CI_RUN: ${{ inputs.ci_run }}
+      STORE: ${{ vars.RELEASE_STORE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify both release gates at the selected SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/release_delivery.py check-ci "$GITHUB_SHA" "$CI_RUN"
+      - name: Check private destination before building
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_STORE_TOKEN }}
+        run: python3 scripts/ci/release_delivery.py check-store "$STORE"
+      - name: Select the same Docker image store used by the receiving host
+        run: |
+          set -euo pipefail
+          test -z "$(docker ps -aq)"
+          config=/etc/docker/daemon.json
+          if sudo test -f "$config"; then
+            sudo cat "$config" | jq '.features["containerd-snapshotter"] = true' > "$RUNNER_TEMP/daemon.json"
+          else
+            echo '{"features":{"containerd-snapshotter":true}}' > "$RUNNER_TEMP/daemon.json"
+          fi
+          sudo dockerd --validate --config-file "$RUNNER_TEMP/daemon.json"
+          sudo install -D -m 0644 "$RUNNER_TEMP/daemon.json" "$config"
+          sudo systemctl restart docker
+          docker info --format '{{json .DriverStatus}}' | jq -e 'index(["driver-type","io.containerd.snapshotter.v1"]) != null'
+      - name: Build and export verified product images
+        run: |
+          set -euo pipefail
+          work=/var/lib/lagrange-delivery
+          sudo install -d -m 0700 "$work"
+          identity=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_EVENT_NAME,GITHUB_WORKFLOW_REF,GITHUB_JOB
+          identity+=,GITHUB_SHA,GITHUB_WORKSPACE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_OS,RUNNER_ARCH,RUNNER_ENVIRONMENT
+          sudo --preserve-env="$identity" scripts/ops/build-hosted-release.sh "$GITHUB_SHA" "$work/build"
+          python3 - <<'PYTHON'
+          import runpy
+          import subprocess
+          dependencies = runpy.run_path("scripts/ops/lib/release-delivery-bundle.py")["DEPENDENCIES"]
+          for image in dependencies:
+              subprocess.run(["sudo", "docker", "image", "pull", "--platform", "linux/amd64", image["source_ref"]], check=True)
+          PYTHON
+          sudo scripts/ops/release-delivery-bundle.sh export "$GITHUB_SHA" "$work/build" "$work/bundle"
+          sudo mv "$work/bundle" "$RUNNER_TEMP/bundle"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/bundle"
+      - name: Bind transport bytes to build and CI evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/ci/release_delivery.py record "$RUNNER_TEMP/bundle" \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$CI_RUN"
+      - id: attest
+        if: inputs.publish
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: ${{ runner.temp }}/bundle/delivery.json
+          show-summary: false
+      - name: Publish and verify immutable assets
+        if: inputs.publish
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_STORE_TOKEN }}
+          SIGNATURE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          install -m 0600 "$SIGNATURE" "$RUNNER_TEMP/bundle/delivery.sigstore.jsonl"
+          python3 scripts/ci/release_delivery.py publish "$RUNNER_TEMP/bundle" \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$STORE"

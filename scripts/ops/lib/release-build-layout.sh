@@ -1721,10 +1721,25 @@ release_build_layout_init() {
     rbl_die 'layout state is already initialized in this shell'
     return 1
   }
+  [ "$#" -eq 4 ] || [ "$#" -eq 5 ] || {
+    rbl_die 'layout init needs source root, commit, state root, cache namespace, and optional execution mode'
+    return 1
+  }
   rbl_source_root=$1
   rbl_commit=$2
   rbl_state_root=$3
   rbl_namespace=$4
+  rbl_execution_mode=${5:-production}
+  case "$rbl_execution_mode" in
+    production) ;;
+    hosted)
+      [ "$rbl_namespace" = product ] || {
+        rbl_die 'hosted execution must retain the product cache namespace'
+        return 1
+      }
+      ;;
+    *) rbl_die 'layout execution mode is invalid'; return 1 ;;
+  esac
   rbl_abs_path_ok "$rbl_source_root" || {
     rbl_die 'source root is not canonical absolute'
     return 1
@@ -1782,11 +1797,22 @@ release_build_layout_init() {
     return 1
   }
   rbl_resource_policy_hash=$(rbl_sha256_file "$rbl_resource_policy") || return 1
+  rbl_hosted_policy_hash=
+  if [ "$rbl_execution_mode" = hosted ]; then
+    rbl_hosted_policy=$rbl_source_root/scripts/ops/lib/hosted-release-build-policy.py
+    [ -f "$rbl_hosted_policy" ] && [ ! -L "$rbl_hosted_policy" ] || {
+      rbl_die 'hosted release build policy is missing or symlinked'
+      return 1
+    }
+    rbl_hosted_policy_hash=$(rbl_sha256_file "$rbl_hosted_policy") || return 1
+  fi
   rbl_run_path=$rbl_state_root/run.json
   RBL_RUN_PATH=$rbl_run_path RBL_SOURCE_ROOT=$rbl_source_root RBL_COMMIT=$rbl_commit \
   RBL_STATE_ROOT=$rbl_state_root RBL_NAMESPACE=$rbl_namespace RBL_SOURCE_HASH=$rbl_source_hash \
+  RBL_EXECUTION_MODE=$rbl_execution_mode \
   RBL_HELPER_HASH=$rbl_helper_hash RBL_LAYOUT_HASH=$rbl_layout_hash \
   RBL_RESOURCE_POLICY_HASH=$rbl_resource_policy_hash \
+  RBL_HOSTED_POLICY_SHA256=$rbl_hosted_policy_hash \
   RBL_RUNTIME_INVENTORY_HASH=$rbl_runtime_inventory_hash \
   RBL_DRAINED_ATTESTATION_BINDING=$rbl_drained_attestation_binding python3 - <<'PY' || return 1
 import json, os, stat, time
@@ -1816,6 +1842,9 @@ value = {
     "drained_readers_attestation":drained_value
   }
 }
+if os.environ["RBL_EXECUTION_MODE"] == "hosted":
+    value["execution_mode"] = "hosted"
+    value["hosted_policy_sha256"] = os.environ["RBL_HOSTED_POLICY_SHA256"]
 encoded = (json.dumps(value, sort_keys=True, separators=(",",":")) + "\n").encode()
 if os.path.lexists(path):
     info = os.lstat(path)
@@ -1823,10 +1852,14 @@ if os.path.lexists(path):
             stat.S_IMODE(info.st_mode) != 0o600 or info.st_uid != os.geteuid()):
         raise SystemExit("run-record-unsafe")
     current = json.loads(open(path, "rb").read().decode())
-    for key in ("format","source_root","source_commit","state_root","cache_namespace",
+    compare_keys=["format","source_root","source_commit","state_root","cache_namespace",
                 "source_input_sha256","runtime_payload_inventory_sha256",
                 "helper_sha256","layout_sha256","resource_policy_sha256","guard_version",
-                "platform","gate_inputs"):
+                "platform","gate_inputs"]
+    if os.environ["RBL_EXECUTION_MODE"] == "hosted":
+        compare_keys.append("execution_mode")
+        compare_keys.append("hosted_policy_sha256")
+    for key in compare_keys:
         if current.get(key) != value[key]:
             raise SystemExit("run-binding-changed")
 else:
@@ -1839,6 +1872,7 @@ PY
   RELEASE_BUILD_LAYOUT_COMMIT=$rbl_commit
   RELEASE_BUILD_LAYOUT_STATE_ROOT=$rbl_state_root
   RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE=$rbl_namespace
+  RELEASE_BUILD_LAYOUT_EXECUTION_MODE=$rbl_execution_mode
   RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256=$rbl_source_hash
   RELEASE_BUILD_LAYOUT_HELPER_SHA256=$rbl_helper_hash
   RELEASE_BUILD_LAYOUT_CONFIG_SHA256=$rbl_layout_hash
@@ -1846,9 +1880,12 @@ PY
   RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256=$rbl_runtime_inventory_hash
   export RELEASE_BUILD_LAYOUT_INITIALIZED RELEASE_BUILD_LAYOUT_SOURCE_ROOT RELEASE_BUILD_LAYOUT_COMMIT
   export RELEASE_BUILD_LAYOUT_STATE_ROOT RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE
+  export RELEASE_BUILD_LAYOUT_EXECUTION_MODE
   export RELEASE_BUILD_LAYOUT_SOURCE_INPUT_SHA256 RELEASE_BUILD_LAYOUT_HELPER_SHA256
   export RELEASE_BUILD_LAYOUT_CONFIG_SHA256 RELEASE_BUILD_LAYOUT_RESOURCE_POLICY_SHA256
   export RELEASE_BUILD_LAYOUT_RUNTIME_INVENTORY_SHA256
+  RELEASE_BUILD_LAYOUT_HOSTED_POLICY_SHA256=$rbl_hosted_policy_hash
+  export RELEASE_BUILD_LAYOUT_HOSTED_POLICY_SHA256
 }
 
 rbl_make_context() {
@@ -3580,7 +3617,11 @@ release_build_layout_gate() {
   RBL_GATE_LABEL=$rbl_gate_label RBL_GATE_PREVIOUS=$rbl_gate_previous \
   RBL_GATE_DRAINED_STATUS=$rbl_gate_drained_status \
   RBL_GATE_DRAINED_BINDING=$rbl_gate_drained_binding \
-  RBL_GATE_STATE=$RELEASE_BUILD_LAYOUT_STATE_ROOT python3 - <<'PY'
+  RBL_GATE_STATE=$RELEASE_BUILD_LAYOUT_STATE_ROOT \
+  RBL_GATE_NAMESPACE=$RELEASE_BUILD_LAYOUT_CACHE_NAMESPACE \
+  RBL_GATE_EXECUTION_MODE=$RELEASE_BUILD_LAYOUT_EXECUTION_MODE \
+  RBL_GATE_HOSTED_POLICY_SHA256=$RELEASE_BUILD_LAYOUT_HOSTED_POLICY_SHA256 \
+  python3 - <<'PY'
 import calendar, datetime, hashlib, json, os, posixpath, re, runpy, selectors, stat, subprocess, tempfile, time
 
 state_root=os.path.abspath(os.environ["RBL_GATE_STATE"])
@@ -3700,13 +3741,87 @@ def prepare_drained(binding):
         "by_name":{item["container_name"]:item for item in fields["containers"]}
     }
 
-def load_run_attestation():
+def load_run_record():
     run_path=os.path.join(state_root,"run.json")
     raw=owned_regular(run_path,1024*1024)
     value=json.loads(raw.decode("utf-8"),object_pairs_hook=pairs,parse_constant=reject_constant)
-    if raw!=canonical(value) or not isinstance(value,dict) or not isinstance(value.get("gate_inputs"),dict):
+    if (raw!=canonical(value) or not isinstance(value,dict) or
+            value.get("format")!="lagrange-build-layout-run-v1" or
+            not isinstance(value.get("gate_inputs"),dict)):
         raise ValueError("run-record-invalid")
-    return value["gate_inputs"].get("drained_readers_attestation")
+    return value
+
+def load_run_attestation():
+    return load_run_record()["gate_inputs"].get("drained_readers_attestation")
+
+def load_hosted_policy(run_record):
+    source_root=os.path.abspath(os.environ.get("RELEASE_BUILD_LAYOUT_SOURCE_ROOT",""))
+    path=os.path.join(source_root,"scripts/ops/lib/hosted-release-build-policy.py")
+    expected=run_record.get("hosted_policy_sha256")
+    if (run_record.get("execution_mode")!="hosted" or
+            run_record.get("cache_namespace")!="product" or
+            not re.fullmatch(r"[0-9a-f]{64}",str(expected)) or
+            expected!=os.environ.get("RBL_GATE_HOSTED_POLICY_SHA256") or
+            os.path.realpath(path)!=path):
+        raise ValueError("hosted-policy-binding-invalid")
+    info=os.lstat(path)
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise ValueError("hosted-policy-file-invalid")
+    with open(path,"rb") as handle:
+        raw=handle.read(256*1024+1)
+    if len(raw)>256*1024 or hashlib.sha256(raw).hexdigest()!=expected:
+        raise ValueError("hosted-policy-hash-mismatch")
+    namespace=runpy.run_path(path,run_name="lagrange_hosted_release_build_policy")
+    required=("validate_runner_identity","parse_os_release","reject_production_cohorts",
+              "parse_systemd_inventory","parse_docker_container_inventory")
+    if any(not callable(namespace.get(name)) for name in required):
+        raise ValueError("hosted-policy-api-invalid")
+    with open(path,"rb") as handle:
+        raw_after=handle.read(256*1024+1)
+    if len(raw_after)>256*1024 or hashlib.sha256(raw_after).hexdigest()!=expected:
+        raise ValueError("hosted-policy-changed")
+    return namespace,expected
+
+def hosted_identity(policy):
+    fields={name:os.environ.get(name,"") for name in (
+        "GITHUB_ACTIONS","GITHUB_REPOSITORY","GITHUB_REF","GITHUB_EVENT_NAME",
+        "GITHUB_WORKFLOW_REF","GITHUB_JOB","GITHUB_SHA","GITHUB_WORKSPACE",
+        "GITHUB_RUN_ID","GITHUB_RUN_ATTEMPT","RUNNER_OS","RUNNER_ARCH",
+        "RUNNER_ENVIRONMENT","SUDO_USER","SUDO_UID")}
+    with open("/etc/os-release",encoding="ascii") as handle:
+        os_release=policy["parse_os_release"](handle.read())
+    source_root=os.environ.get("RELEASE_BUILD_LAYOUT_SOURCE_ROOT","")
+    source_info=os.stat(source_root,follow_symlinks=False)
+    runner_uid=int(os.environ.get("SUDO_UID","0"))
+    remote=run_bounded(["git","-c","safe.directory="+source_root,"-C",source_root,
+                        "remote","get-url","origin"])
+    if not command_ok(remote):
+        raise ValueError("hosted-runner-source-invalid")
+    remote_url=remote["stdout"].decode("utf-8").strip()
+    identity=policy["validate_runner_identity"](
+        fields=fields,os_release=os_release,machine=os.uname().machine,
+        commit=os.environ.get("RELEASE_BUILD_LAYOUT_COMMIT",""),source_root=source_root,
+        source_owner_uid=source_info.st_uid,runner_uid=runner_uid,remote_url=remote_url)
+    return identity
+
+def hosted_cohort_inventory(policy):
+    installed=run_bounded(["systemctl","list-unit-files","--type=service",
+                           "--no-legend","--no-pager","lagrange*"])
+    loaded=run_bounded(["systemctl","list-units","--all","--type=service",
+                        "--no-legend","--no-pager","lagrange*"])
+    containers=run_bounded(["docker","ps","--all","--format","{{.Names}}"])
+    evidence["hosted_isolation"]={
+        "installed_units":command_evidence(installed),
+        "loaded_units":command_evidence(loaded),
+        "containers":command_evidence(containers),
+        "production_root_present":os.path.lexists("/opt/lagrange")}
+    if not command_ok(installed) or not command_ok(loaded) or not command_ok(containers):
+        raise ValueError("hosted-cohort-inventory-failed")
+    policy["reject_production_cohorts"](
+        systemd_units=(policy["parse_systemd_inventory"](installed["stdout"])+
+                       policy["parse_systemd_inventory"](loaded["stdout"])),
+        containers=policy["parse_docker_container_inventory"](containers["stdout"]),
+        production_root_present=os.path.lexists("/opt/lagrange"))
 
 def command_empty():
     return {
@@ -4320,12 +4435,28 @@ try:
     owned_directory(gate_dir)
     if previous!=0:
         fail("previous-step-failed")
-    unit=os.environ.get("RELEASE_BUILD_SYSTEMD_UNIT","")
-    manager=os.environ.get("RELEASE_BUILD_SYSTEMD_MANAGER","system")
-    if manager not in ("system","user") or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service",unit):
-        fail("systemd-binding-invalid")
-    units=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_UNITS",""),"unit")
-    containers=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_CONTAINERS",""),"container")
+    try:
+        run_record=load_run_record()
+    except (OSError,ValueError,UnicodeError,json.JSONDecodeError):
+        fail("run-record-invalid")
+    namespace=run_record.get("cache_namespace")
+    execution_mode=run_record.get("execution_mode","production")
+    if (namespace!=os.environ.get("RBL_GATE_NAMESPACE") or
+            execution_mode!=os.environ.get("RBL_GATE_EXECUTION_MODE","production")):
+        fail("gate-namespace-changed")
+    hosted=(execution_mode=="hosted")
+    if hosted:
+        unit=""
+        manager="hosted-runner"
+        units=[]
+        containers=[]
+    else:
+        unit=os.environ.get("RELEASE_BUILD_SYSTEMD_UNIT","")
+        manager=os.environ.get("RELEASE_BUILD_SYSTEMD_MANAGER","system")
+        if manager not in ("system","user") or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:@-]*\.service",unit):
+            fail("systemd-binding-invalid")
+        units=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_UNITS",""),"unit")
+        containers=valid_list(os.environ.get("RELEASE_BUILD_HEALTH_CONTAINERS",""),"container")
     try:
         drained_binding=current_drained_binding()
         run_drained_binding=load_run_attestation()
@@ -4347,6 +4478,8 @@ try:
         if (set(containers)!=full_container_inventory or len(containers)!=11 or
                 any(name not in containers for name in drained_names)):
             fail("drained-readers-container-inventory-invalid")
+    if hosted and (drained is not None or os.environ.get("RELEASE_BUILD_RESEARCH_EXCEPTION","")):
+        fail("hosted-build-attestation-forbidden")
     now_ns=time.time_ns()
     try:
         exception=secure_exception(os.environ.get("RELEASE_BUILD_RESEARCH_EXCEPTION",""),now_ns)
@@ -4379,34 +4512,45 @@ try:
         fail("process-scan-failed")
     if any(item in ("cargo","rustc","rustdoc") for item in process_names):
         fail("compiler-process-active")
-    build_properties=["LoadState","ActiveState","SubState","ExecMainStatus","MainPID","ControlGroup","Nice","IOSchedulingClass","IOSchedulingPriority"]
-    build,build_command=systemd_show(manager,unit,build_properties)
-    evidence["build_unit"]={"manager":manager,"selected":build,"command":build_command}
-    if (build["LoadState"],build["ActiveState"],build["SubState"],build["ExecMainStatus"])!=("loaded","active","running","0"):
-        fail("build-service-not-running")
-    decimal(build["MainPID"],positive=True)
-    nice=decimal(build["Nice"])
-    io_priority=decimal(build["IOSchedulingPriority"])
-    if not 1<=nice<=19:
-        fail("build-service-priority-invalid")
-    if build["IOSchedulingClass"] in ("idle","3"):
-        pass
-    elif build["IOSchedulingClass"] in ("best-effort","2") and 5<=io_priority<=7:
-        pass
+    if hosted:
+        try:
+            hosted_policy,hosted_policy_hash=load_hosted_policy(run_record)
+            evidence["hosted_runner"]=hosted_identity(hosted_policy)
+            hosted_cohort_inventory(hosted_policy)
+            evidence["hosted_isolation"]["policy_sha256"]=hosted_policy_hash
+        except (OSError,ValueError,KeyError,TypeError,UnicodeError,json.JSONDecodeError):
+            fail("hosted-runner-or-isolation-invalid")
+        evidence["build_unit"]={"manager":"github-hosted-runner","selected":{"mode":"foreground"},"command":empty_command}
+        unit_selected={}
     else:
-        fail("build-service-priority-invalid")
-    if not in_build_cgroup(build["ControlGroup"]):
-        fail("apply-not-running-inside-build-service")
-    unit_selected={}
-    for name in units:
-        selected,command=systemd_show("system",name,["LoadState","ActiveState","SubState","ExecMainStatus","MainPID","NRestarts"])
-        evidence["units"][name]={"selected":selected,"command":command,"manager":"system"}
-        if ((selected["LoadState"],selected["ActiveState"],selected["SubState"],selected["ExecMainStatus"])!=
-                ("loaded","active","running","0")):
-            fail("systemd-health-invalid")
-        decimal(selected["MainPID"],positive=True)
-        decimal(selected["NRestarts"])
-        unit_selected[name]=selected
+        build_properties=["LoadState","ActiveState","SubState","ExecMainStatus","MainPID","ControlGroup","Nice","IOSchedulingClass","IOSchedulingPriority"]
+        build,build_command=systemd_show(manager,unit,build_properties)
+        evidence["build_unit"]={"manager":manager,"selected":build,"command":build_command}
+        if (build["LoadState"],build["ActiveState"],build["SubState"],build["ExecMainStatus"])!=("loaded","active","running","0"):
+            fail("build-service-not-running")
+        decimal(build["MainPID"],positive=True)
+        nice=decimal(build["Nice"])
+        io_priority=decimal(build["IOSchedulingPriority"])
+        if not 1<=nice<=19:
+            fail("build-service-priority-invalid")
+        if build["IOSchedulingClass"] in ("idle","3"):
+            pass
+        elif build["IOSchedulingClass"] in ("best-effort","2") and 5<=io_priority<=7:
+            pass
+        else:
+            fail("build-service-priority-invalid")
+        if not in_build_cgroup(build["ControlGroup"]):
+            fail("apply-not-running-inside-build-service")
+        unit_selected={}
+        for name in units:
+            selected,command=systemd_show("system",name,["LoadState","ActiveState","SubState","ExecMainStatus","MainPID","NRestarts"])
+            evidence["units"][name]={"selected":selected,"command":command,"manager":"system"}
+            if ((selected["LoadState"],selected["ActiveState"],selected["SubState"],selected["ExecMainStatus"])!=
+                    ("loaded","active","running","0")):
+                fail("systemd-health-invalid")
+            decimal(selected["MainPID"],positive=True)
+            decimal(selected["NRestarts"])
+            unit_selected[name]=selected
     boot=normalized_boot(open("/proc/sys/kernel/random/boot_id",encoding="ascii").read().strip())
     try:
         old=load_state()
@@ -4455,20 +4599,21 @@ try:
         evidence["journal"]["status"]="FAIL"
         fail("kernel-oom-observed")
     evidence["journal"]["status"]="PASS"
-    docker_format='{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}{{printf "\t"}}{{.State.Status}}{{printf "\t"}}{{.State.Paused}}{{printf "\t"}}{{.State.Dead}}{{printf "\t"}}{{.State.StartedAt}}{{printf "\t"}}{{.State.FinishedAt}}'
     container_selected={}
-    for name in containers:
-        inspected=run_bounded(["docker","inspect","--type","container","--format",docker_format,name])
-        evidence["containers"][name]={"command":command_evidence(inspected),"selected":None}
-        if not command_ok(inspected):
-            fail("container-inspect-failed")
-        try:
-            selected=parse_container(inspected["stdout"],name,exception,drained,now_ns)
-        except (ValueError,UnicodeError):
-            fail("drained-readers-state-invalid" if drained is not None and name in drained_names else
-                 "container-health-invalid")
-        evidence["containers"][name]["selected"]=selected
-        container_selected[name]=selected
+    if not hosted:
+        docker_format='{{.Id}}{{printf "\t"}}{{.State.Running}}{{printf "\t"}}{{.State.Restarting}}{{printf "\t"}}{{.State.OOMKilled}}{{printf "\t"}}{{if .State.Health}}{{.State.Health.Status}}{{else}}absent{{end}}{{printf "\t"}}{{.RestartCount}}{{printf "\t"}}{{if index .Config.Labels "com.docker.compose.project"}}{{index .Config.Labels "com.docker.compose.project"}}{{else}}absent{{end}}{{printf "\t"}}{{.Image}}{{printf "\t"}}{{.State.ExitCode}}{{printf "\t"}}{{.State.Status}}{{printf "\t"}}{{.State.Paused}}{{printf "\t"}}{{.State.Dead}}{{printf "\t"}}{{.State.StartedAt}}{{printf "\t"}}{{.State.FinishedAt}}'
+        for name in containers:
+            inspected=run_bounded(["docker","inspect","--type","container","--format",docker_format,name])
+            evidence["containers"][name]={"command":command_evidence(inspected),"selected":None}
+            if not command_ok(inspected):
+                fail("container-inspect-failed")
+            try:
+                selected=parse_container(inspected["stdout"],name,exception,drained,now_ns)
+            except (ValueError,UnicodeError):
+                fail("drained-readers-state-invalid" if drained is not None and name in drained_names else
+                     "container-health-invalid")
+            evidence["containers"][name]["selected"]=selected
+            container_selected[name]=selected
     try:
         next_value=next_state(old,boot,since_us,since,unit_selected,container_selected,exception,drained)
     except ValueError as error:
