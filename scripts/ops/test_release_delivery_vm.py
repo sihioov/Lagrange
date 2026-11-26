@@ -99,6 +99,21 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
             vm.guest_preflight()
         call.assert_not_called()
 
+    def test_unit_inventory_accepts_an_unrelated_unit_and_rejects_project_units(self):
+        argv = ["systemctl", "list-unit-files", "--plain", "--no-legend", "--no-pager"]
+        clean = b"systemd-journald.service static -\n"
+        with mock.patch.object(vm, "call", return_value=clean) as inventory:
+            vm.check_guest_units()
+            inventory.assert_called_once_with(argv, code="UNIT_INVENTORY")
+        for row in (b"lagrange.service enabled -", b"lagrange-daily.timer disabled -",
+                    b"paper-runner.service masked -"):
+            with (self.subTest(row=row), mock.patch.object(vm, "call", return_value=clean + row),
+                  self.assertRaisesRegex(vm.RehearsalError, "EXISTING_LAGRANGE_UNITS")):
+                vm.check_guest_units()
+        with (mock.patch.object(vm, "call", side_effect=vm.RehearsalError("UNIT_INVENTORY")),
+              self.assertRaisesRegex(vm.RehearsalError, "UNIT_INVENTORY")):
+            vm.check_guest_units()
+
     def delivery_args(self, *options):
         return vm.delivery_inputs(argparse.ArgumentParser(), [
             "--commit", COMMIT, "--import-dir", "/protected/output", *options,

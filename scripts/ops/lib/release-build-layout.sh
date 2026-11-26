@@ -3773,7 +3773,7 @@ def load_hosted_policy(run_record):
         raise ValueError("hosted-policy-hash-mismatch")
     namespace=runpy.run_path(path,run_name="lagrange_hosted_release_build_policy")
     required=("validate_runner_identity","parse_os_release","reject_production_cohorts",
-              "parse_systemd_inventory","parse_docker_container_inventory")
+              "validate_systemd_inventory","parse_docker_container_inventory")
     if any(not callable(namespace.get(name)) for name in required):
         raise ValueError("hosted-policy-api-invalid")
     with open(path,"rb") as handle:
@@ -3806,9 +3806,9 @@ def hosted_identity(policy):
 
 def hosted_cohort_inventory(policy):
     installed=run_bounded(["systemctl","list-unit-files","--type=service",
-                           "--no-legend","--no-pager","lagrange*"])
+                           "--no-legend","--no-pager","systemd-journald.service","lagrange*"])
     loaded=run_bounded(["systemctl","list-units","--all","--type=service",
-                        "--no-legend","--no-pager","lagrange*"])
+                        "--no-legend","--no-pager","systemd-journald.service","lagrange*"])
     containers=run_bounded(["docker","ps","--all","--format","{{.Names}}"])
     evidence["hosted_isolation"]={
         "installed_units":command_evidence(installed),
@@ -3817,9 +3817,10 @@ def hosted_cohort_inventory(policy):
         "production_root_present":os.path.lexists("/opt/lagrange")}
     if not command_ok(installed) or not command_ok(loaded) or not command_ok(containers):
         raise ValueError("hosted-cohort-inventory-failed")
+    installed_units,loaded_units=policy["validate_systemd_inventory"](
+        installed["stdout"],loaded["stdout"])
     policy["reject_production_cohorts"](
-        systemd_units=(policy["parse_systemd_inventory"](installed["stdout"])+
-                       policy["parse_systemd_inventory"](loaded["stdout"])),
+        systemd_units=installed_units+loaded_units,
         containers=policy["parse_docker_container_inventory"](containers["stdout"]),
         production_root_present=os.path.lexists("/opt/lagrange"))
 

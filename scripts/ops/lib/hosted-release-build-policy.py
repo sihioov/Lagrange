@@ -20,6 +20,10 @@ REMOTE_URLS = frozenset(
         "https://github.com/sihioov/Lagrange.git",
     }
 )
+
+SYSTEMD_INVENTORY_SENTINEL = "systemd-journald.service"
+
+
 def _require(condition, reason):
     if not condition:
         raise ValueError(reason)
@@ -119,7 +123,7 @@ def reject_production_cohorts(*, systemd_units, containers, production_root_pres
     _require(isinstance(containers, (list, tuple)) and
              all(isinstance(item, str) for item in containers),
              "hosted-container-inventory-invalid")
-    _require(not any(item.startswith("lagrange-") for item in systemd_units),
+    _require(not any(_decoded_unit_name(item).startswith("lagrange-") for item in systemd_units),
              "production-systemd-cohort-present")
     _require(not any(item.startswith("lagrange-station-") for item in containers),
              "production-container-cohort-present")
@@ -139,10 +143,25 @@ def parse_systemd_inventory(raw):
         if not line.strip():
             continue
         name = line.split()[0]
-        if not re.fullmatch(r"[A-Za-z0-9_.:@-]+\.service", name):
+        if not re.fullmatch(r"(?:[A-Za-z0-9_.:@-]|\\x[0-9A-Fa-f]{2})+\.service", name):
             raise ValueError("hosted-systemd-inventory-invalid")
         names.append(name)
     return names
+
+
+def _decoded_unit_name(name):
+    return re.sub(r"\\x([0-9A-Fa-f]{2})", lambda match: chr(int(match.group(1), 16)), name)
+
+
+def validate_systemd_inventory(installed_raw, loaded_raw):
+    """Parse both filtered inventories and require the known journald control."""
+
+    installed = parse_systemd_inventory(installed_raw)
+    loaded = parse_systemd_inventory(loaded_raw)
+    if (installed.count(SYSTEMD_INVENTORY_SENTINEL) != 1 or
+            loaded.count(SYSTEMD_INVENTORY_SENTINEL) != 1):
+        raise ValueError("hosted-systemd-inventory-sentinel-missing")
+    return installed, loaded
 
 
 def parse_docker_container_inventory(raw):
