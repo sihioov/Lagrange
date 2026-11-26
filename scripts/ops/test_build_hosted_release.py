@@ -125,9 +125,11 @@ class HostedIsolationTests(unittest.TestCase):
     def test_inventory_parsers_keep_names_and_reject_malformed_rows(self):
         self.assertEqual(
             POLICY.parse_systemd_inventory(
-                b"docker.service enabled enabled\nlagrange-station-api.service disabled disabled\n"
+                b"docker.service enabled enabled\n"
+                b"worker\\x2dpool.service static -\n"
+                b"lagrange-station-api.service disabled disabled\n"
             ),
-            ["docker.service", "lagrange-station-api.service"],
+            ["docker.service", "worker\\x2dpool.service", "lagrange-station-api.service"],
         )
         self.assertEqual(
             POLICY.parse_docker_container_inventory(b"buildx_buildkit_default\npostgres\n"),
@@ -137,6 +139,28 @@ class HostedIsolationTests(unittest.TestCase):
             POLICY.parse_systemd_inventory(b"No files found.\n")
         with self.assertRaises(ValueError):
             POLICY.parse_docker_container_inventory(b"unexpected container name\n")
+
+    def test_systemd_inventory_requires_known_installed_and_loaded_control(self):
+        installed, loaded = POLICY.validate_systemd_inventory(
+            b"systemd-journald.service static -\nworker\\x2dpool.service static -\n",
+            b"systemd-journald.service loaded active running Journal Service\n"
+            b"worker\\x2dpool.service loaded inactive dead Worker Pool\n",
+        )
+        self.assertEqual(installed[0], "systemd-journald.service")
+        self.assertEqual(loaded[0], "systemd-journald.service")
+
+        for installed_raw, loaded_raw in (
+            (b"worker.service static -\n", b"systemd-journald.service loaded active running\n"),
+            (b"systemd-journald.service static -\n", b"worker.service loaded active running\n"),
+            (
+                b"systemd-journald.service static -\n"
+                b"systemd-journald.service alias -\n",
+                b"systemd-journald.service loaded active running\n",
+            ),
+        ):
+            with self.subTest(installed=installed_raw, loaded=loaded_raw):
+                with self.assertRaisesRegex(ValueError, "sentinel"):
+                    POLICY.validate_systemd_inventory(installed_raw, loaded_raw)
 
     def test_production_install_cohorts_are_rejected(self):
         POLICY.reject_production_cohorts(
@@ -148,6 +172,11 @@ class HostedIsolationTests(unittest.TestCase):
             {"systemd_units": [], "containers": [], "production_root_present": True},
             {
                 "systemd_units": ["lagrange-api.service"],
+                "containers": [],
+                "production_root_present": False,
+            },
+            {
+                "systemd_units": [r"lagrange\x2dapi.service"],
                 "containers": [],
                 "production_root_present": False,
             },
@@ -189,6 +218,7 @@ class HostedBuilderContractTests(unittest.TestCase):
         self.assertIn('release_build_layout_init "$root" "$commit" "$state_root" product hosted', self.text)
         self.assertIn('release_build_layout_verify_image "$service" "$commit" "$image_id" "$state_root"', self.text)
         self.assertIn('discard_verified_archive "$image_id"', self.text)
+        self.assertIn('"systemd-journald.service","lagrange*"', self.layout_text)
         self.assertIn('validate(artifact,complete,os.environ["RELEASE_COMMIT"])', self.text)
         self.assertIn("$'d8\\nrelease.manifest'", self.text)
         self.assertIn('release_image_manifest_write "$temporary" "$commit"', self.text)

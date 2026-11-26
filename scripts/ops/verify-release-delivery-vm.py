@@ -86,6 +86,15 @@ def docker(*args, timeout=45):
                 timeout=timeout).decode().strip()
 
 
+def check_guest_units():
+    # On Ubuntu, a filtered list-unit-files returns 1 when no unit matches.
+    # Read the inventory first so a real systemctl failure still stops admission.
+    rows = call(["systemctl", "list-unit-files", "--plain", "--no-legend", "--no-pager"],
+                code="UNIT_INVENTORY").splitlines()
+    require(not any(row.lstrip().startswith((b"lagrange", b"paper-runner.")) for row in rows),
+            "EXISTING_LAGRANGE_UNITS")
+
+
 def guest_preflight():
     require(os.geteuid() == 0 and os.uname().machine == "x86_64", "ROOT_LINUX_AMD64_VM_REQUIRED")
     vm = call(["systemd-detect-virt", "--vm"], code="ROOT_LINUX_AMD64_VM_REQUIRED").decode().strip()
@@ -103,9 +112,7 @@ def guest_preflight():
     mounts = call(["findmnt", "-rn", "-o", "FSTYPE"], code="MOUNT_INVENTORY").decode().splitlines()
     require(not set(mounts).intersection({"9p", "virtiofs", "vboxsf", "vmhgfs", "nfs", "nfs4",
                                           "cifs", "smb3", "fuse.sshfs"}), "REMOVE_GUEST_SHARED_MOUNTS")
-    units = call(["systemctl", "list-unit-files", "--no-legend", "lagrange*", "paper-runner.*"],
-                 code="UNIT_INVENTORY").decode().strip()
-    require(not units, "EXISTING_LAGRANGE_UNITS")
+    check_guest_units()
     require(not docker("ps", "--all", "--quiet") and not docker("volume", "ls", "--quiet"),
             "GUEST_DOCKER_RUNTIME_NOT_EMPTY")
     require(set(docker("network", "ls", "--format", "{{.Name}}").splitlines()) ==
