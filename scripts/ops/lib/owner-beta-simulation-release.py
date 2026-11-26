@@ -374,8 +374,9 @@ def _expected_compile_env(source_commit: str, input_sha256: str, recipe_sha256: 
     }
 
 
-def _validate_receipt(data: bytes, complete: bytes, config: dict):
-    validated_config = _revalidate_config(config)
+@_boundary
+def validate_build_receipt(data: bytes, complete: bytes, commit: str):
+    """Validate transferable D8 evidence before a runtime configuration exists."""
     receipt = _json_object(data, RECEIPT_LIMIT)
     if set(receipt) != _RECEIPT_KEYS:
         _reject()
@@ -397,24 +398,25 @@ def _validate_receipt(data: bytes, complete: bytes, config: dict):
             or receipt["package"] != PACKAGE or receipt["platform"] != PLATFORM
             or receipt["profile"] != PROFILE):
         _reject()
-    if not _is_commit(receipt["source_commit"]):
+    if not _is_commit(commit) or receipt["source_commit"] != commit:
         _reject()
     for key in ("binary_sha256", "cache_key", "h_sha256", "input_sha256", "recipe_sha256"):
         if not _is_hex64(receipt[key]):
             _reject()
-    config_input = validated_config["source_input_sha256"][len("sha256:"):]
-    config_recipe = validated_config["recipe_sha256"][len("sha256:"):]
-    expected_env = _expected_compile_env(receipt["source_commit"], config_input, config_recipe)
-    if (receipt["source_commit"] != validated_config["code_commit"]
-            or receipt["binary_sha256"] != validated_config["binary_sha256"][len("sha256:"):]
-            or receipt["input_sha256"] != config_input
-            or receipt["recipe_sha256"] != config_recipe
-            or receipt["compile_env"] != expected_env):
+    if receipt["compile_env"] != _expected_compile_env(commit, receipt["input_sha256"], receipt["recipe_sha256"]):
         _reject()
-    receipt_digest = hashlib.sha256(data).hexdigest()
-    if (type(complete) is not bytes or len(complete) != COMPLETE_BYTES
-            or complete != receipt_digest.encode("ascii") + b"\n"
-            or validated_config["receipt_sha256"] != "sha256:" + receipt_digest):
+    if type(complete) is not bytes or complete != hashlib.sha256(data).hexdigest().encode("ascii") + b"\n":
+        _reject()
+    return receipt
+
+
+def _validate_receipt(data: bytes, complete: bytes, config: dict):
+    validated_config = _revalidate_config(config)
+    receipt = validate_build_receipt(data, complete, validated_config["code_commit"])
+    if (validated_config["receipt_sha256"] != "sha256:" + hashlib.sha256(data).hexdigest()
+            or validated_config["binary_sha256"] != "sha256:" + receipt["binary_sha256"]
+            or validated_config["source_input_sha256"] != "sha256:" + receipt["input_sha256"]
+            or validated_config["recipe_sha256"] != "sha256:" + receipt["recipe_sha256"]):
         _reject()
     return receipt
 

@@ -80,6 +80,8 @@ jobs:
       - run: bash scripts/ops/build-production-images-static-check.sh
       - run: |
           python -m unittest scripts.ci.test_ci_contract scripts.ci.test_cache_evidence scripts.ci.test_ubuntu_apt_mirrors -v
+      - name: Verify private release transfer gates
+        run: python -B -m unittest scripts.ci.test_release_delivery scripts.ops.test_build_hosted_release scripts.ops.test_release_delivery_bundle scripts.ops.test_release_delivery_vm -v
       - name: Verify Paper SQL fixture failure cleanup
         run: python -m unittest discover -s deploy/db/integration-validation -p 'test_r5_paper_sql.py' -v
       - name: Verify Paper release provenance and audit stream
