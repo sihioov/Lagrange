@@ -161,6 +161,13 @@ class FakeDocker:
         self.images: dict[str, dict[str, object]] = {}
         self.saved_images: dict[str, dict[str, object]] = {}
         self.calls: list[tuple[str, ...]] = []
+        self.archive_writes: list[tuple[tuple[str, ...], bytes]] = []
+        self.omit_combined_compat_refs: set[str] = set()
+        self.combined_extra_tag: object | None = None
+        self.combined_duplicate_tag: str | None = None
+        self.corrupt_combined_index_ref: str | None = None
+        self.omit_combined_oci_index = False
+        self.bad_single_id_ref: str | None = None
         self.load_count = 0
 
     def add(self, ref: str, revision: str | None, repo_digests: list[str] | None = None) -> dict[str, object]:
@@ -203,32 +210,82 @@ class FakeDocker:
             refs = args[4:]
             if any(ref not in self.images for ref in refs):
                 raise BUNDLE.BundleError("docker-image-save-failed")
-            self.saved_images = {ref: self.images[ref] for ref in refs}
+            self.saved_images.update({ref: self.images[ref] for ref in refs})
+            current_images = {ref: self.images[ref] for ref in refs}
             archive_files: dict[str, bytes] = {}
             manifest_records = []
             index_records = []
-            for ref, record in self.saved_images.items():
+            for ref, record in current_images.items():
                 files = dict(record["files"])
                 compat = json.loads(files.pop("manifest.json"))
                 root = json.loads(files.pop("index.json"))
                 compat[0]["RepoTags"] = [ref]
                 root["manifests"][0]["annotations"]["io.containerd.image.name"] = canonical_ref(ref)
                 archive_files.update(files)
-                manifest_records.extend(compat)
+                if len(refs) == 1 and ref == self.bad_single_id_ref:
+                    root["manifests"][0]["digest"] = "sha256:" + "0" * 64
+                if not (len(refs) > 1 and ref in self.omit_combined_compat_refs):
+                    manifest_records.extend(compat)
                 index_records.extend(root["manifests"])
+            if len(refs) > 1 and manifest_records and self.combined_extra_tag is not None:
+                manifest_records[0]["RepoTags"].append(self.combined_extra_tag)
+            if len(refs) > 1 and manifest_records and self.combined_duplicate_tag is not None:
+                manifest_records[0]["RepoTags"].append(self.combined_duplicate_tag)
+            if len(refs) > 1 and self.corrupt_combined_index_ref is not None:
+                for descriptor in index_records:
+                    annotations = descriptor.get("annotations", {})
+                    if annotations.get("io.containerd.image.name") == canonical_ref(self.corrupt_combined_index_ref):
+                        descriptor["digest"] = "sha256:" + "0" * 64
+                        break
             archive_files["manifest.json"] = json_bytes(manifest_records)
             archive_files["index.json"] = json_bytes({
                 "schemaVersion": 2,
                 "mediaType": "application/vnd.oci.image.index.v1+json",
                 "manifests": index_records,
             })
-            archive_path.write_bytes(tar_bytes(archive_files))
+            if len(refs) > 1 and self.omit_combined_oci_index:
+                archive_files.pop("index.json")
+            raw_archive = tar_bytes(archive_files)
+            archive_path.write_bytes(raw_archive)
+            self.archive_writes.append((tuple(refs), raw_archive))
             return b""
         raise AssertionError(f"unexpected Docker operation: {args[:2]}")
 
     def load(self, _paths: list[Path]) -> None:
         self.load_count += 1
         self.images = dict(self.saved_images)
+
+
+def share_oci_compat_child(fake: FakeDocker, source_ref: str, alias_ref: str) -> str:
+    source = fake.images[source_ref]
+    alias = fake.images[alias_ref]
+    source_files = source["files"]
+    alias_files = dict(source_files)
+    compat = json.loads(alias_files["manifest.json"])
+    compat[0]["RepoTags"] = [alias_ref]
+
+    root = json.loads(alias_files["index.json"])
+    root_descriptor = root["manifests"][0]
+    source_root_id = root_descriptor["digest"]
+    source_index_raw = alias_files["blobs/sha256/" + source_root_id[7:]]
+    source_index = json.loads(source_index_raw)
+    source_index["manifests"].append({
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "digest": "sha256:" + "1" * 64,
+        "size": 1,
+        "platform": {"os": "linux", "architecture": "arm64"},
+    })
+    alias_index_raw = json_bytes(source_index)
+    alias_image_id = "sha256:" + sha(alias_index_raw)
+    alias_files["blobs/sha256/" + alias_image_id[7:]] = alias_index_raw
+    root_descriptor["digest"] = alias_image_id
+    root_descriptor["size"] = len(alias_index_raw)
+    root_descriptor["annotations"]["io.containerd.image.name"] = canonical_ref(alias_ref)
+    alias_files["manifest.json"] = json_bytes(compat)
+    alias_files["index.json"] = json_bytes(root)
+    alias["files"] = alias_files
+    alias["image_id"] = alias_image_id
+    return alias_image_id
 
 
 def local_trusted_file(path: Path, label: str, limit: int) -> bytes:
@@ -310,6 +367,19 @@ class BundleFlowTests(unittest.TestCase):
         with patch.object(BUNDLE, "load_docker_archive", side_effect=self.fake.load):
             self.run_with_patches(BUNDLE.import_bundle, COMMIT, str(self.bundle_dir), str(self.output_dir))
 
+    def expected_archive(self) -> dict[str, dict[str, object]]:
+        with patch.object(BUNDLE, "run_docker", side_effect=self.fake.run):
+            BUNDLE.ensure_dependency_aliases(self.dependency_rows)
+        return BUNDLE.expected_archive_images(self.image_rows, self.dependency_rows)
+
+    def rewrite_release_manifest(self) -> None:
+        manifest = ["LAGRANGE_RELEASE_MANIFEST_V3", f"commit|{COMMIT}"]
+        manifest.extend(
+            f"image|{row['service']}|{row['ref']}|{row['image_id']}|{COMMIT}"
+            for row in self.image_rows
+        )
+        (self.build / BUNDLE.RELEASE_MANIFEST).write_text("\n".join(manifest) + "\n", encoding="ascii")
+
     def test_export_import_retry_and_duplicate_import(self) -> None:
         self.export()
         assets = {item.name for item in self.bundle_dir.iterdir()}
@@ -351,6 +421,146 @@ class BundleFlowTests(unittest.TestCase):
 
         self.import_bundle()
         self.assertEqual(self.fake.load_count, 2)
+
+    def test_export_repairs_missing_oci_compat_alias_and_import_remains_strict(self) -> None:
+        source_ref = self.image_rows[0]["ref"]
+        missing_ref = self.image_rows[1]["ref"]
+        self.image_rows[1]["image_id"] = share_oci_compat_child(self.fake, source_ref, missing_ref)
+        self.assertNotEqual(self.image_rows[0]["image_id"], self.image_rows[1]["image_id"])
+        self.rewrite_release_manifest()
+        self.fake.omit_combined_compat_refs.add(missing_ref)
+
+        validate_archive_file = BUNDLE.validate_archive_file
+        repaired: dict[str, bytes] = {}
+
+        def capture_repaired_archive(path, expected, **kwargs):
+            if path.name == "repaired.tar":
+                repaired["raw"] = path.read_bytes()
+            return validate_archive_file(path, expected, **kwargs)
+
+        with patch.object(BUNDLE, "validate_archive_file", side_effect=capture_repaired_archive):
+            self.export()
+
+        expected = self.expected_archive()
+        self.assertEqual(self.fake.archive_writes[0][0], tuple(expected))
+        with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-tag-set-invalid"):
+            BUNDLE.validate_archive_stream(io.BytesIO(self.fake.archive_writes[0][1]), expected)
+        self.assertEqual(self.fake.archive_writes[1][0], (missing_ref,))
+        BUNDLE.validate_archive_stream(io.BytesIO(repaired["raw"]), expected)
+
+        chunk_path = self.bundle_dir / "images.tar.zst.part000000"
+        metadata_path = self.bundle_dir / BUNDLE.BUNDLE_MANIFEST
+        original_chunk = chunk_path.read_bytes()
+        original_metadata = metadata_path.read_bytes()
+        incomplete_archive = self.fake.archive_writes[0][1]
+        incomplete_chunk = subprocess.check_output(["zstd", "-q", "-T1", "-4", "-c"], input=incomplete_archive)
+        metadata = json.loads(original_metadata)
+        metadata["chunks"] = [{"name": chunk_path.name, "bytes": len(incomplete_chunk), "sha256": sha(incomplete_chunk)}]
+        metadata["transport_bytes"] = len(incomplete_chunk)
+        metadata["transport_sha256"] = sha(incomplete_chunk)
+        chunk_path.write_bytes(incomplete_chunk)
+        metadata_path.write_bytes(BUNDLE.canonical_json(metadata))
+        with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-tag-set-invalid"):
+            self.import_bundle()
+        self.assertEqual(self.fake.load_count, 0)
+        self.assertFalse(self.output_dir.exists())
+        chunk_path.write_bytes(original_chunk)
+        metadata_path.write_bytes(original_metadata)
+
+        self.import_bundle()
+        self.assertEqual(self.fake.load_count, 1)
+
+    def test_export_does_not_repair_invalid_compatibility_tags_or_crosswired_index(self) -> None:
+        missing_ref = self.image_rows[2]["ref"]
+        expected = self.expected_archive()
+        archive = self.root / "images.tar"
+
+        for mutation in ("nonstring", "unknown", "duplicate", "index", "missing-index"):
+            with self.subTest(mutation=mutation):
+                self.fake.archive_writes.clear()
+                self.fake.calls.clear()
+                self.fake.omit_combined_compat_refs = {missing_ref}
+                self.fake.combined_extra_tag = None
+                self.fake.combined_duplicate_tag = None
+                self.fake.corrupt_combined_index_ref = None
+                self.fake.omit_combined_oci_index = False
+                if mutation == "nonstring":
+                    self.fake.combined_extra_tag = 17
+                elif mutation == "unknown":
+                    self.fake.combined_extra_tag = "foreign.example/unknown:tag"
+                elif mutation == "duplicate":
+                    self.fake.combined_duplicate_tag = self.image_rows[0]["ref"]
+                elif mutation == "missing-index":
+                    self.fake.omit_combined_oci_index = True
+                else:
+                    self.fake.corrupt_combined_index_ref = self.image_rows[0]["ref"]
+
+                expected_error = {
+                    "nonstring": "docker-archive-compat-tag-nonstring",
+                    "unknown": "docker-archive-compat-tag-unexpected",
+                    "duplicate": "docker-archive-compat-tag-duplicate",
+                    "index": "docker-archive-oci-image-id-mismatch",
+                    "missing-index": "docker-archive-tag-set-unrepairable",
+                }[mutation]
+                with self.assertRaisesRegex(BUNDLE.BundleError, expected_error):
+                    self.run_with_patches(BUNDLE.save_verified_archive, archive, expected)
+                self.assertEqual(len(self.fake.archive_writes), 1)
+                self.assertEqual(
+                    len([call for call in self.fake.calls if call[:3] == ("image", "save", "--output")]),
+                    1,
+                )
+                self.assertEqual(archive.read_bytes(), self.fake.archive_writes[0][1])
+                with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-tag-set-invalid"):
+                    BUNDLE.validate_archive_stream(io.BytesIO(archive.read_bytes()), expected)
+                self.assertEqual(set(self.root.iterdir()), {self.build, archive})
+
+    def test_export_rejects_missing_compat_match_without_replacing_raw_archive(self) -> None:
+        missing_ref = self.image_rows[2]["ref"]
+        expected = self.expected_archive()
+        self.fake.omit_combined_compat_refs.add(missing_ref)
+        archive = self.root / "images.tar"
+
+        with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-compat-tag-match-missing"):
+            self.run_with_patches(BUNDLE.save_verified_archive, archive, expected)
+
+        self.assertEqual(archive.read_bytes(), self.fake.archive_writes[0][1])
+        self.assertEqual(len(self.fake.archive_writes), 2)
+        self.assertEqual(set(self.root.iterdir()), {self.build, archive})
+
+    def test_export_rejects_ambiguous_compat_match(self) -> None:
+        source_ref = self.image_rows[0]["ref"]
+        second_ref = self.image_rows[1]["ref"]
+        missing_ref = self.image_rows[2]["ref"]
+        self.image_rows[1]["image_id"] = share_oci_compat_child(self.fake, source_ref, second_ref)
+        self.image_rows[2]["image_id"] = share_oci_compat_child(self.fake, source_ref, missing_ref)
+        self.rewrite_release_manifest()
+        expected = self.expected_archive()
+        self.fake.omit_combined_compat_refs.add(missing_ref)
+        archive = self.root / "images.tar"
+
+        with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-compat-tag-match-ambiguous"):
+            self.run_with_patches(BUNDLE.save_verified_archive, archive, expected)
+
+        self.assertEqual(archive.read_bytes(), self.fake.archive_writes[0][1])
+        self.assertEqual(len(self.fake.archive_writes), 2)
+        self.assertEqual(set(self.root.iterdir()), {self.build, archive})
+
+    def test_export_rejects_single_ref_identity_mismatch_and_cleans_private_work(self) -> None:
+        source_ref = self.image_rows[0]["ref"]
+        missing_ref = self.image_rows[1]["ref"]
+        self.image_rows[1]["image_id"] = share_oci_compat_child(self.fake, source_ref, missing_ref)
+        self.rewrite_release_manifest()
+        expected = self.expected_archive()
+        self.fake.omit_combined_compat_refs.add(missing_ref)
+        self.fake.bad_single_id_ref = missing_ref
+        archive = self.root / "images.tar"
+
+        with self.assertRaisesRegex(BUNDLE.BundleError, "docker-archive-oci-image-id-mismatch"):
+            self.run_with_patches(BUNDLE.save_verified_archive, archive, expected)
+
+        self.assertEqual(archive.read_bytes(), self.fake.archive_writes[0][1])
+        self.assertEqual(len(self.fake.archive_writes), 2)
+        self.assertEqual(set(self.root.iterdir()), {self.build, archive})
 
     def test_extra_asset_and_wrong_commit_fail_before_load(self) -> None:
         self.export()
