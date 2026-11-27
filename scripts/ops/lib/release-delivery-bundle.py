@@ -315,7 +315,8 @@ def run_docker(args: list[str], label: str) -> bytes:
 
 
 def inspect_image(ref: str, require_repo_digest: str | None = None) -> dict[str, str]:
-    template = "{{.Id}}|{{.Os}}|{{.Architecture}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}}"
+    template = ('{{.Id}}|{{.Os}}|{{.Architecture}}|'
+                '{{with index .Config "Labels"}}{{index . "org.opencontainers.image.revision"}}{{end}}')
     if require_repo_digest is not None:
         template += "|{{json .RepoDigests}}"
     raw = run_docker(["image", "inspect", "--format", template, ref], "docker-image-inspect-failed")

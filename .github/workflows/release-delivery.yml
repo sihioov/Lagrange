@@ -60,6 +60,16 @@ jobs:
           sudo install -D -m 0644 "$RUNNER_TEMP/daemon.json" "$config"
           sudo systemctl restart docker
           docker info --format '{{json .DriverStatus}}' | jq -e 'type == "array" and any(.[]; . == ["driver-type","io.containerd.snapshotter.v1"])'
+      - name: Pull and inspect pinned runtime dependencies
+        run: |
+          python3 - <<'PYTHON'
+          import runpy
+          import subprocess
+          bundle = runpy.run_path("scripts/ops/lib/release-delivery-bundle.py")
+          for image in bundle["DEPENDENCIES"]:
+              subprocess.run(["sudo", "docker", "image", "pull", "--platform", "linux/amd64", image["source_ref"]], check=True)
+          bundle["dependency_identities"]()
+          PYTHON
       - name: Build and export verified product images
         run: |
           set -euo pipefail
@@ -68,13 +78,6 @@ jobs:
           identity=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_EVENT_NAME,GITHUB_WORKFLOW_REF,GITHUB_JOB
           identity+=,GITHUB_SHA,GITHUB_WORKSPACE,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,RUNNER_OS,RUNNER_ARCH,RUNNER_ENVIRONMENT
           sudo --preserve-env="$identity" scripts/ops/build-hosted-release.sh "$GITHUB_SHA" "$work/build"
-          python3 - <<'PYTHON'
-          import runpy
-          import subprocess
-          dependencies = runpy.run_path("scripts/ops/lib/release-delivery-bundle.py")["DEPENDENCIES"]
-          for image in dependencies:
-              subprocess.run(["sudo", "docker", "image", "pull", "--platform", "linux/amd64", image["source_ref"]], check=True)
-          PYTHON
           sudo scripts/ops/release-delivery-bundle.sh export "$GITHUB_SHA" "$work/build" "$work/bundle"
           sudo mv "$work/bundle" "$RUNNER_TEMP/bundle"
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/bundle"

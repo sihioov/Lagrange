@@ -38,6 +38,20 @@ OVERRIDE = BUNDLE.compose_override([
 
 
 class ReleaseDeliveryVMTests(unittest.TestCase):
+    def test_export_and_vm_inspect_unlabeled_pinned_postgres(self):
+        ref = next(dep["source_ref"] for dep in BUNDLE.DEPENDENCIES if dep["name"] == "postgres")
+        try:
+            image_id = vm.docker("image", "inspect", "--format", "{{.Id}}", ref)
+        except (OSError, vm.RehearsalError):
+            self.skipTest("Docker Engine or pinned PostgreSQL image unavailable")
+        with self.subTest(stage="export"):
+            self.assertEqual(BUNDLE.inspect_image(ref, ref),
+                             {"image_id": image_id, "platform": "linux/amd64", "revision": ""})
+        with self.subTest(stage="vm"):
+            vm.inspect_image(image_id, image_id)
+            with self.assertRaisesRegex(vm.RehearsalError, "IMAGE_REVISION"):
+                vm.inspect_image(image_id, image_id, COMMIT)
+
     def test_upstream_override_is_a_closed_id_mapping(self):
         self.assertEqual(vm.upstream_override(OVERRIDE), UPSTREAM)
         for invalid in (
