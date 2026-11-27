@@ -211,7 +211,8 @@ def upstream_override(data):
 
 def inspect_image(reference, identity, revision=None):
     actual = docker("image", "inspect", "--format",
-                    '{{.Id}}|{{.Os}}/{{.Architecture}}|{{index .Config.Labels "org.opencontainers.image.revision"}}',
+                    '{{.Id}}|{{.Os}}/{{.Architecture}}|'
+                    '{{with index .Config "Labels"}}{{index . "org.opencontainers.image.revision"}}{{end}}',
                     reference).split("|")
     require(len(actual) == 3 and actual[:2] == [identity, "linux/amd64"],
             f"IMAGE_ID_OR_PLATFORM {reference}")
