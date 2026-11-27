@@ -2,6 +2,9 @@ from contextlib import redirect_stdout
 import io
 import json
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -63,6 +66,22 @@ class ReleaseDeliveryTests(unittest.TestCase):
         for use in actions:
             self.assertRegex(use, SHA_ACTION)
         self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
+
+    @unittest.skipUnless(shutil.which("jq"), "the workflow's Docker store check requires jq")
+    def test_docker_store_check_requires_the_containerd_driver_status_row(self):
+        _, workflow = load_workflow("release-delivery.yml")
+        prefix = "docker info --format '{{json .DriverStatus}}' | "
+        (probe,) = [line.removeprefix(prefix) for step in workflow["jobs"]["delivery"]["steps"]
+                    for line in step.get("run", "").splitlines() if line.startswith(prefix)]
+        command = shlex.split(probe)
+        self.assertEqual(command[:2], ["jq", "-e"])
+        row = ["driver-type", "io.containerd.snapshotter.v1"]
+        for status, accepted in (([row], True), ([["Backing Filesystem", "extfs"], row], True),
+                                 ([], False), (None, False), (row, False),
+                                 ([["other", row[1]], [row[0], "overlay2"]], False)):
+            with self.subTest(status=status):
+                result = subprocess.run(command, input=json.dumps(status), text=True, capture_output=True)
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
     def test_public_or_mutable_store_rejected_before_upload(self):
         for private, enabled in ((False, True), (True, False)):

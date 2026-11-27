@@ -59,7 +59,7 @@ jobs:
           sudo dockerd --validate --config-file "$RUNNER_TEMP/daemon.json"
           sudo install -D -m 0644 "$RUNNER_TEMP/daemon.json" "$config"
           sudo systemctl restart docker
-          docker info --format '{{json .DriverStatus}}' | jq -e 'index(["driver-type","io.containerd.snapshotter.v1"]) != null'
+          docker info --format '{{json .DriverStatus}}' | jq -e 'type == "array" and any(.[]; . == ["driver-type","io.containerd.snapshotter.v1"])'
       - name: Build and export verified product images
         run: |
           set -euo pipefail
