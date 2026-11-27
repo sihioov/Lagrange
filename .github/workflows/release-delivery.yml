@@ -60,15 +60,21 @@ jobs:
           sudo install -D -m 0644 "$RUNNER_TEMP/daemon.json" "$config"
           sudo systemctl restart docker
           docker info --format '{{json .DriverStatus}}' | jq -e 'type == "array" and any(.[]; . == ["driver-type","io.containerd.snapshotter.v1"])'
-      - name: Pull and inspect pinned runtime dependencies
+      - name: Verify a Docker archive of the pinned runtime dependencies before the product build
         run: |
           python3 - <<'PYTHON'
           import runpy
           import subprocess
+          from pathlib import Path
+          from tempfile import TemporaryDirectory
           bundle = runpy.run_path("scripts/ops/lib/release-delivery-bundle.py")
           for image in bundle["DEPENDENCIES"]:
               subprocess.run(["sudo", "docker", "image", "pull", "--platform", "linux/amd64", image["source_ref"]], check=True)
-          bundle["dependency_identities"]()
+          dependencies = bundle["dependency_identities"]()
+          bundle["ensure_dependency_aliases"](dependencies)
+          expected = bundle["expected_archive_images"]([], dependencies)
+          with TemporaryDirectory() as directory:
+              bundle["save_verified_archive"](Path(directory) / "dependencies.tar", expected)
           PYTHON
       - name: Build and export verified product images
         run: |

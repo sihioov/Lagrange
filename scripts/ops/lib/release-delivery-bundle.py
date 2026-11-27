@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import re
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from copy import copy
 from pathlib import Path
 from typing import Any, BinaryIO
 
@@ -89,6 +91,13 @@ OCI_MANIFEST_MEDIA_TYPES = {
 
 class BundleError(Exception):
     pass
+
+
+class MissingOciCompatTagsError(BundleError):
+    def __init__(self, rows: list[dict[str, Any]], missing_refs: list[str]) -> None:
+        super().__init__("docker-archive-tag-set-invalid")
+        self.rows = rows
+        self.missing_refs = missing_refs
 
 
 def fail(reason: str) -> None:
@@ -576,7 +585,11 @@ def _validate_oci_selected_image(
     _validate_oci_platform_manifest(manifest_raw, descriptor_media_type, config_path, compatibility_layers, data, files)
 
 
-def validate_archive_stream(stream: BinaryIO, expected: dict[str, dict[str, Any]]) -> None:
+def validate_archive_stream(
+    stream: BinaryIO,
+    expected: dict[str, dict[str, Any]],
+    diagnose_export_omissions: bool = False,
+) -> list[dict[str, Any]]:
     """Check the exact saved tag set and its platform/revision metadata."""
     data, files, directories = _archive_records(stream)
     if "manifest.json" not in data:
@@ -599,8 +612,12 @@ def validate_archive_stream(stream: BinaryIO, expected: dict[str, dict[str, Any]
         if not isinstance(tags, list) or not tags or not isinstance(layers, list) or not layers:
             fail("docker-archive-manifest-record-invalid")
         for ref in tags:
-            if not isinstance(ref, str) or ref not in expected or ref in tag_config:
-                fail("docker-archive-tag-set-invalid")
+            if not isinstance(ref, str):
+                fail("docker-archive-compat-tag-nonstring" if diagnose_export_omissions else "docker-archive-tag-set-invalid")
+            if ref not in expected:
+                fail("docker-archive-compat-tag-unexpected" if diagnose_export_omissions else "docker-archive-tag-set-invalid")
+            if ref in tag_config:
+                fail("docker-archive-compat-tag-duplicate" if diagnose_export_omissions else "docker-archive-tag-set-invalid")
             tag_config[ref] = config_path
             tag_layers[ref] = list(layers)
         if config_path not in files:
@@ -618,8 +635,15 @@ def validate_archive_stream(stream: BinaryIO, expected: dict[str, dict[str, Any]
             if not oci:
                 layer_dir = layer.rsplit("/", 1)[0]
                 expected_files.update((f"{layer_dir}/VERSION", f"{layer_dir}/json"))
-    if set(tag_config) != set(expected):
-        fail("docker-archive-tag-set-invalid")
+    missing_refs = [ref for ref in expected if ref not in tag_config]
+    can_diagnose_omissions = (
+        diagnose_export_omissions
+        and tag_config
+        and {"oci-layout", "index.json"} <= set(data)
+        and "repositories" not in data
+    )
+    if missing_refs and not can_diagnose_omissions:
+        fail("docker-archive-tag-set-unrepairable" if diagnose_export_omissions else "docker-archive-tag-set-invalid")
     for ref, config_path in tag_config.items():
         config_raw = data.get(config_path)
         if config_raw is None:
@@ -703,14 +727,107 @@ def validate_archive_stream(stream: BinaryIO, expected: dict[str, dict[str, Any]
     }
     if directories - allowed_dirs:
         fail("docker-archive-unexpected-directory")
+    if missing_refs:
+        raise MissingOciCompatTagsError(entries, missing_refs)
+    return entries
 
 
-def validate_archive_file(path: Path, expected: dict[str, dict[str, str]]) -> None:
+def validate_archive_file(
+    path: Path,
+    expected: dict[str, dict[str, Any]],
+    diagnose_export_omissions: bool = False,
+) -> list[dict[str, Any]]:
     try:
         with path.open("rb") as stream:
-            validate_archive_stream(stream, expected)
+            return validate_archive_stream(stream, expected, diagnose_export_omissions)
     except OSError:
         fail("docker-archive-unreadable")
+
+
+def _copy_tar_with_manifest(source_path: Path, replacement_path: Path, raw_manifest: bytes) -> None:
+    try:
+        with tarfile.open(source_path, mode="r:*", errorlevel=2) as source_tar, tarfile.open(replacement_path, mode="w") as output_tar:
+            found_manifest = False
+            for member in source_tar:
+                name = safe_tar_name(member.name)
+                if name == "manifest.json":
+                    if found_manifest or not member.isreg():
+                        fail("docker-archive-repair-manifest-invalid")
+                    replacement = copy(member)
+                    replacement.pax_headers = dict(member.pax_headers)
+                    replacement.size = len(raw_manifest)
+                    if "size" in replacement.pax_headers:
+                        replacement.pax_headers["size"] = str(len(raw_manifest))
+                    output_tar.addfile(replacement, io.BytesIO(raw_manifest))
+                    found_manifest = True
+                elif member.isdir():
+                    output_tar.addfile(member)
+                else:
+                    source = source_tar.extractfile(member)
+                    if source is None:
+                        fail("docker-archive-repair-entry-unreadable")
+                    output_tar.addfile(member, source)
+            if not found_manifest:
+                fail("docker-archive-repair-manifest-missing")
+        os.chmod(replacement_path, 0o600)
+    except BundleError:
+        replacement_path.unlink(missing_ok=True)
+        raise
+    except (OSError, tarfile.TarError, EOFError, ValueError):
+        replacement_path.unlink(missing_ok=True)
+        fail("docker-archive-repair-write-failed")
+
+
+def repair_missing_oci_compat_tags(
+    archive_path: Path,
+    expected: dict[str, dict[str, Any]],
+    incomplete: MissingOciCompatTagsError,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix=".archive-repair.", dir=archive_path.parent) as temporary:
+        repair_dir = Path(temporary)
+        os.chmod(repair_dir, 0o700)
+        single_path = repair_dir / "single.tar"
+        replacement_path = repair_dir / "repaired.tar"
+        for ref in incomplete.missing_refs:
+            run_docker(["image", "save", "--output", str(single_path), ref], "docker-image-save-failed")
+            try:
+                os.chmod(single_path, 0o600)
+            except OSError:
+                fail("docker-archive-repair-single-save-unreadable")
+            single_rows = validate_archive_file(single_path, {ref: expected[ref]})
+            if len(single_rows) != 1 or single_rows[0]["RepoTags"] != [ref]:
+                fail("docker-archive-repair-single-tag-invalid")
+            separate_row = single_rows[0]
+            matches = [
+                row for row in incomplete.rows
+                if row["Config"] == separate_row["Config"] and row["Layers"] == separate_row["Layers"]
+            ]
+            if not matches:
+                fail("docker-archive-compat-tag-match-missing")
+            if len(matches) != 1:
+                fail("docker-archive-compat-tag-match-ambiguous")
+            matches[0]["RepoTags"].append(ref)
+            single_path.unlink()
+
+        _copy_tar_with_manifest(archive_path, replacement_path, canonical_json(incomplete.rows))
+        validate_archive_file(replacement_path, expected)
+        os.replace(replacement_path, archive_path)
+        try:
+            print(
+                f"release-delivery-bundle: repaired {len(incomplete.missing_refs)} OCI compatibility tag(s) after strict validation",
+                file=sys.stderr,
+            )
+        except OSError:
+            pass
+
+
+def save_verified_archive(archive_path: Path, expected: dict[str, dict[str, Any]]) -> None:
+    refs = list(expected)
+    run_docker(["image", "save", "--output", str(archive_path), *refs], "docker-image-save-failed")
+    try:
+        validate_archive_file(archive_path, expected, diagnose_export_omissions=True)
+    except MissingOciCompatTagsError as exc:
+        repair_missing_oci_compat_tags(archive_path, expected, exc)
 
 
 def split_archive(source: BinaryIO, directory: Path) -> tuple[list[dict[str, Any]], str, int]:
@@ -991,10 +1108,8 @@ def export_bundle(commit: str, build_dir_arg: str, bundle_dir_arg: str) -> None:
         fail("bundle-temporary-directory-create-failed")
     archive_path = temporary_root / "images.tar"
     try:
-        refs = [row["ref"] for row in image_rows] + [row["archive_ref"] for row in dependency_metadata]
-        run_docker(["image", "save", "--output", str(archive_path), *refs], "docker-image-save-failed")
         expected = expected_archive_images(image_metadata, dependency_metadata)
-        validate_archive_file(archive_path, expected)
+        save_verified_archive(archive_path, expected)
         try:
             with archive_path.open("rb") as archive_stream:
                 compressor = subprocess.Popen(
