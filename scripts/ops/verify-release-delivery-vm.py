@@ -147,6 +147,25 @@ def check_checkout(commit):
             not git("status", "--porcelain=v1", "--untracked-files=all").strip(), "EXACT_CLEAN_CHECKOUT")
 
 
+def protected_checkout(path):
+    checkout = Path(path)
+    for directory in (*reversed(checkout.parents), checkout):
+        info = directory.lstat()
+        require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and not info.st_mode & 0o022,
+                "UNTRUSTED_SOURCE_CHECKOUT")
+    # Helpers execute from this tree as root. Reject writable files, links and
+    # special files throughout the worktree and the local Git database.
+    untrusted = call(["find", checkout, "(", "!", "-uid", "0", "-o", "-perm", "/022",
+                      "-o", "!", "(", "-type", "f", "-o", "-type", "d", ")", ")",
+                      "-printf", "x", "-quit"], code="UNTRUSTED_SOURCE_CHECKOUT")
+    git_dir = checkout / ".git"
+    require(not untrusted and git_dir.is_dir() and not any(
+        os.path.lexists(git_dir / name) for name in
+        ("commondir", "objects/info/alternates", "objects/info/http-alternates")
+    ), "UNTRUSTED_SOURCE_CHECKOUT")
+    return checkout
+
+
 def protected_file(path):
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and (info.st_uid, info.st_gid, info.st_nlink) == (0, 0, 1)
@@ -268,6 +287,8 @@ def fixture_environment(workspace, commit, project):
         "RESEARCH_APP_ENV": "production", "RESEARCH_FETCH_MODE": "credentialed",
         "RESEARCH_CANDIDATE_ENABLED": "false", "RESEARCH_ENTITLEMENT_REFERENCE": "release-delivery-vm",
         "RESEARCH_ENTITLEMENT_SHA256": "1" * 64, "RANGE_RAW_BATCH_ID": "compose-config-disabled",
+        "OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE": "release-delivery-vm",
+        "OWNER_EQUITY_V2_ENTITLEMENT_SHA256": "sha256:" + "2" * 64,
         "RECOMMENDATION_DATASET_VERSION_ID": "11111111-1111-4111-8111-111111111111",
         "RECOMMENDATION_DATASET_ID": "krx_eod_bars", "RECOMMENDATION_DATASET_VERSION": "fixture-unused",
         "RECOMMENDATION_CURATED_VERSION": "1", "RECOMMENDATION_DATASET_MANIFEST_SHA256": "f" * 64,
@@ -476,6 +497,8 @@ def rehearse(workspace, commit, imported):
 
 def delivery_inputs(parser, argv):
     parser.add_argument("--commit", required=True)
+    parser.add_argument("--source-checkout", metavar="ABSOLUTE_DIR",
+                        help="Root-owned clean checkout of the image commit (default: verifier checkout)")
     parser.add_argument("--import-dir", required=True, metavar="ABSOLUTE_DIR",
                         help="New private output directory, or existing verified import in preloaded mode")
     parser.add_argument("--received", metavar="ABSOLUTE_DIR", help="Protected received release")
@@ -490,7 +513,7 @@ def delivery_inputs(parser, argv):
     if args.received:
         require(all(re.fullmatch(r"[1-9][0-9]{0,19}", number)
                     for number in (args.build_run, args.build_attempt)), "EXACT_RELEASE_RUN_REQUIRED")
-    for path in (args.import_dir, args.received, args.trusted_root):
+    for path in (args.import_dir, args.received, args.trusted_root, args.source_checkout):
         if path is not None:
             require(path.startswith("/") and path != "/" and not any(c in path for c in ("//", "\n", "\r"))
                     and os.path.normpath(path) == path, "CANONICAL_DELIVERY_PATH_REQUIRED")
@@ -523,9 +546,12 @@ def accept_delivery(args, workspace, docker_root):
 
 
 def main():
+    global ROOT
     args = delivery_inputs(argparse.ArgumentParser(description=__doc__, allow_abbrev=False), None)
     os.umask(0o077)
     vm, docker_root = guest_preflight()
+    if args.source_checkout:
+        ROOT = protected_checkout(args.source_checkout)
     lock_path = "/run/lock/lagrange-release-delivery-vm.lock"
     with os.fdopen(os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600), "r+") as lock:
         info = os.fstat(lock.fileno())

@@ -144,6 +144,29 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
             self.delivery_args("--received", "//protected/received", "--trusted-root", "/etc/gh-root",
                                "--build-run", "1234", "--build-attempt", "2")
 
+    def test_separate_source_checkout_requires_protected_ancestry(self):
+        with self.assertRaisesRegex(vm.RehearsalError, "CANONICAL_DELIVERY_PATH_REQUIRED"):
+            self.delivery_args("--source-checkout", "../release")
+        path = self.delivery_args("--source-checkout", "/srv/release").source_checkout
+        good = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        for scan, git_dir, redirected in ((b"", True, False), (b"x", True, False),
+                                          (b"", False, False), (b"", True, True)):
+            with (mock.patch.object(Path, "lstat", return_value=good),
+                  mock.patch.object(vm, "call", return_value=scan),
+                  mock.patch.object(Path, "is_dir", return_value=git_dir),
+                  mock.patch.object(vm.os.path, "lexists", return_value=redirected)):
+                if not scan and git_dir and not redirected:
+                    self.assertEqual(vm.protected_checkout(path), Path(path))
+                else:
+                    with self.assertRaisesRegex(vm.RehearsalError, "UNTRUSTED_SOURCE_CHECKOUT"):
+                        vm.protected_checkout(path)
+        for mode, uid in ((stat.S_IFDIR | 0o777, 0), (stat.S_IFLNK | 0o755, 0),
+                          (stat.S_IFDIR | 0o700, 1000)):
+            bad = SimpleNamespace(st_mode=mode, st_uid=uid)
+            with (mock.patch.object(Path, "lstat", side_effect=[good, bad]),
+                  self.assertRaisesRegex(vm.RehearsalError, "UNTRUSTED_SOURCE_CHECKOUT")):
+                vm.protected_checkout(path)
+
     def test_protected_inputs_refuse_untrusted_file_metadata(self):
         info = {"st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_gid": 0, "st_nlink": 1, "st_size": 42}
         path = mock.Mock()
@@ -260,6 +283,8 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
         self.assertEqual(env["LAGRANGE_CODE_COMMIT"], COMMIT)
         self.assertEqual(env["LAGRANGE_PGDATA_VOLUME"], "fixture-pgdata")
         self.assertTrue(env["AUTH0_DOMAIN"].endswith(".invalid"))
+        self.assertEqual(env["OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE"], "release-delivery-vm")
+        self.assertRegex(env["OWNER_EQUITY_V2_ENTITLEMENT_SHA256"], r"^sha256:[0-9a-f]{64}$")
         self.assertTrue(env["LAGRANGE_DATA_DIR"].startswith("/var/lib/isolated-fixture/"))
 
 

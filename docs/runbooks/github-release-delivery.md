@@ -37,6 +37,8 @@ sudo scripts/ops/verify-release-delivery-vm.py \
   --build-attempt "$BUILD_ATTEMPT" --trusted-root "$TRUSTED_ROOT" --import-dir "$IMPORT_DIR"
 ```
 
+이미 게시한 릴리스에 새 버전의 VM 검사기를 사용할 때는 신뢰할 수 있는 경로로 검사기를 따로 반입하고 그 SHA-256을 대조한다. 위 명령에 `--source-checkout /srv/lagrange-source-$COMMIT`을 추가해 이미지와 일치하는 원래 checkout을 지정한다. root가 신뢰하는 소스에서 준비한 독립 Git 사본을 사용한다. 검사기는 경로와 상위 디렉터리, 소스와 로컬 `.git` 파일의 소유권·쓰기 권한을 확인한다. 서명 검증·반입·설치·기동에 사용하는 소스는 지정한 전체 커밋의 깨끗한 checkout에서 읽는다. 검사 기록에는 검사기 해시와 이미지 커밋을 함께 남긴다.
+
 게스트는 Python 3.12 이상을 갖춘 전용 Linux/amd64 KVM 또는 QEMU VM이다. 호스팅 빌드는 운영 호스트와 같은 Docker containerd 이미지 저장소를 사용한다. 게스트에서도 같은 저장소를 사용해야 manifest의 로컬 이미지 ID를 대조할 수 있다. Git, Docker, Compose v2, zstd, curl, OpenSSL과 오프라인 증명을 검증할 수 있는 `/usr/bin/gh`를 설치한 뒤 외부 NIC와 호스트 공유 마운트를 분리한다. 첫 반입 전에 Docker 이미지·컨테이너·볼륨 목록이 모두 비어 있어야 한다.
 
 위 명령은 빈 출력 경로를 사용해 전송 목록의 서명·파일 해시를 오프라인에서 확인하고, 같은 릴리스를 두 번 반입하며 자원을 표본 측정한다. 이어 D8 증거와 V3 이미지 ID를 확인하고, 합성 설정으로 설치 계획과 Compose 사전검사를 실행하고, Paper OFF 상태의 DB·API·웹·프록시 기동 및 종료 결과를 확인한다. 게스트의 `GUEST_RESOURCE`에는 메모리·swap·파일시스템별 가용 공간의 시작값·최솟값·종료값이 남는다. 같은 시간대 호스트의 가용 메모리·swap·디스크와 기존 서비스 상태도 대조해 VM을 수일간 유지할 수 있는지 판정한다.
