@@ -7,7 +7,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import stat
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -144,6 +147,29 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
             self.delivery_args("--received", "//protected/received", "--trusted-root", "/etc/gh-root",
                                "--build-run", "1234", "--build-attempt", "2")
 
+    def test_separate_source_checkout_requires_protected_ancestry(self):
+        with self.assertRaisesRegex(vm.RehearsalError, "CANONICAL_DELIVERY_PATH_REQUIRED"):
+            self.delivery_args("--source-checkout", "../release")
+        path = self.delivery_args("--source-checkout", "/srv/release").source_checkout
+        good = SimpleNamespace(st_mode=stat.S_IFDIR | 0o755, st_uid=0)
+        for scan, git_dir, redirected in ((b"", True, False), (b"x", True, False),
+                                          (b"", False, False), (b"", True, True)):
+            with (mock.patch.object(Path, "lstat", return_value=good),
+                  mock.patch.object(vm, "call", return_value=scan),
+                  mock.patch.object(Path, "is_dir", return_value=git_dir),
+                  mock.patch.object(vm.os.path, "lexists", return_value=redirected)):
+                if not scan and git_dir and not redirected:
+                    self.assertEqual(vm.protected_checkout(path), Path(path))
+                else:
+                    with self.assertRaisesRegex(vm.RehearsalError, "UNTRUSTED_SOURCE_CHECKOUT"):
+                        vm.protected_checkout(path)
+        for mode, uid in ((stat.S_IFDIR | 0o777, 0), (stat.S_IFLNK | 0o755, 0),
+                          (stat.S_IFDIR | 0o700, 1000)):
+            bad = SimpleNamespace(st_mode=mode, st_uid=uid)
+            with (mock.patch.object(Path, "lstat", side_effect=[good, bad]),
+                  self.assertRaisesRegex(vm.RehearsalError, "UNTRUSTED_SOURCE_CHECKOUT")):
+                vm.protected_checkout(path)
+
     def test_protected_inputs_refuse_untrusted_file_metadata(self):
         info = {"st_mode": stat.S_IFREG | 0o644, "st_uid": 0, "st_gid": 0, "st_nlink": 1, "st_size": 42}
         path = mock.Mock()
@@ -238,7 +264,12 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
             "State": {"Running": True, "Health": {"Status": "healthy"}, "OOMKilled": False},
             "Image": identity,
             "RestartCount": 0,
+            "NetworkSettings": {"Networks": {project + "_edge": {}}, "Ports": {}},
         } for service in vm.PERSISTENT]
+        proxy = rows[vm.PERSISTENT.index("reverse-proxy")]["NetworkSettings"]
+        proxy["Networks"][project + "_fixture-ingress"] = {}
+        binding = {"HostIp": "127.0.0.1", "HostPort": "443"}
+        proxy["Ports"] = {"8080/tcp": None, "8443/tcp": [binding]}
         ids = "\n".join(str(index) for index in range(len(rows)))
         with (mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
               contextlib.redirect_stdout(io.StringIO()) as evidence):
@@ -246,12 +277,43 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
         self.assertEqual(evidence.getvalue().count("health=healthy restarts=0"), 4)
 
         api = rows[vm.PERSISTENT.index("api-server")]
+        for target, update in ((proxy["Ports"], {"8443/tcp": None}),
+                               (binding, {"HostIp": "0.0.0.0"}),
+                               (api["NetworkSettings"]["Networks"], {project + "_fixture-ingress": {}})):
+            with (self.subTest(update=update), mock.patch.dict(target, update),
+                  mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
+                  contextlib.redirect_stdout(io.StringIO()),
+                  self.assertRaisesRegex(vm.RehearsalError, "GUEST_LOOPBACK_INGRESS")):
+                vm.verify_running(project, images)
         api["Config"]["Env"].remove("OWNER_BETA_PAPER_MODE=disabled")
         api["Config"]["Env"].append("OWNER_BETA_PAPER_MODE=owner_only")
         with (mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
               contextlib.redirect_stdout(io.StringIO()),
               self.assertRaisesRegex(vm.RehearsalError, "API_OFF_STATE")):
             vm.verify_running(project, images)
+
+    def test_compose_publishes_only_the_proxy_on_guest_loopback(self):
+        docker = shutil.which("docker", path=vm.ENV["PATH"])
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            env = {**vm.ENV, "HOME": tmp}
+            if not docker or subprocess.run([docker, "compose", "version"], env=env,
+                                           capture_output=True, timeout=10).returncode:
+                self.skipTest("Docker Compose unavailable")
+            (work / ".env").write_text(vm.fixture_environment(work, COMMIT, "fixture")[1])
+            (work / "ingress.yml").write_text(vm.GUEST_INGRESS)
+            config = json.loads(vm.call([docker, "compose", "--project-name", "fixture",
+                                         "--env-file", work / ".env", "-f", vm.ROOT / "deploy/compose/compose.yml",
+                                         "-f", work / "ingress.yml", "config", "--format", "json"],
+                                        code="GUEST_COMPOSE_CONFIG", env=env))
+        services = config["services"]
+        self.assertEqual([name for name, service in services.items()
+                          if "fixture-ingress" in service.get("networks", {})], ["reverse-proxy"])
+        self.assertTrue(config["networks"]["edge"]["internal"])
+        self.assertEqual(set(services["reverse-proxy"]["networks"]), {"edge", "fixture-ingress"})
+        port, = services["reverse-proxy"]["ports"]
+        self.assertEqual((port["host_ip"], port["published"], port["target"], port["protocol"]),
+                         ("127.0.0.1", "443", 8443, "tcp"))
 
     def test_fixture_env_declares_off_modes_and_only_synthetic_bindings(self):
         _, text = vm.fixture_environment(Path("/var/lib/isolated-fixture"), COMMIT, "fixture")
@@ -260,6 +322,8 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
         self.assertEqual(env["LAGRANGE_CODE_COMMIT"], COMMIT)
         self.assertEqual(env["LAGRANGE_PGDATA_VOLUME"], "fixture-pgdata")
         self.assertTrue(env["AUTH0_DOMAIN"].endswith(".invalid"))
+        self.assertEqual(env["OWNER_EQUITY_V2_ENTITLEMENT_REFERENCE"], "release-delivery-vm")
+        self.assertRegex(env["OWNER_EQUITY_V2_ENTITLEMENT_SHA256"], r"^sha256:[0-9a-f]{64}$")
         self.assertTrue(env["LAGRANGE_DATA_DIR"].startswith("/var/lib/isolated-fixture/"))
 
 
