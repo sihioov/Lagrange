@@ -7,7 +7,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shutil
 import stat
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -261,7 +264,12 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
             "State": {"Running": True, "Health": {"Status": "healthy"}, "OOMKilled": False},
             "Image": identity,
             "RestartCount": 0,
+            "NetworkSettings": {"Networks": {project + "_edge": {}}, "Ports": {}},
         } for service in vm.PERSISTENT]
+        proxy = rows[vm.PERSISTENT.index("reverse-proxy")]["NetworkSettings"]
+        proxy["Networks"][project + "_fixture-ingress"] = {}
+        binding = {"HostIp": "127.0.0.1", "HostPort": "443"}
+        proxy["Ports"] = {"8080/tcp": None, "8443/tcp": [binding]}
         ids = "\n".join(str(index) for index in range(len(rows)))
         with (mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
               contextlib.redirect_stdout(io.StringIO()) as evidence):
@@ -269,12 +277,43 @@ class ReleaseDeliveryVMTests(unittest.TestCase):
         self.assertEqual(evidence.getvalue().count("health=healthy restarts=0"), 4)
 
         api = rows[vm.PERSISTENT.index("api-server")]
+        for target, update in ((proxy["Ports"], {"8443/tcp": None}),
+                               (binding, {"HostIp": "0.0.0.0"}),
+                               (api["NetworkSettings"]["Networks"], {project + "_fixture-ingress": {}})):
+            with (self.subTest(update=update), mock.patch.dict(target, update),
+                  mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
+                  contextlib.redirect_stdout(io.StringIO()),
+                  self.assertRaisesRegex(vm.RehearsalError, "GUEST_LOOPBACK_INGRESS")):
+                vm.verify_running(project, images)
         api["Config"]["Env"].remove("OWNER_BETA_PAPER_MODE=disabled")
         api["Config"]["Env"].append("OWNER_BETA_PAPER_MODE=owner_only")
         with (mock.patch.object(vm, "docker", side_effect=[ids, json.dumps(rows)]),
               contextlib.redirect_stdout(io.StringIO()),
               self.assertRaisesRegex(vm.RehearsalError, "API_OFF_STATE")):
             vm.verify_running(project, images)
+
+    def test_compose_publishes_only_the_proxy_on_guest_loopback(self):
+        docker = shutil.which("docker", path=vm.ENV["PATH"])
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            env = {**vm.ENV, "HOME": tmp}
+            if not docker or subprocess.run([docker, "compose", "version"], env=env,
+                                           capture_output=True, timeout=10).returncode:
+                self.skipTest("Docker Compose unavailable")
+            (work / ".env").write_text(vm.fixture_environment(work, COMMIT, "fixture")[1])
+            (work / "ingress.yml").write_text(vm.GUEST_INGRESS)
+            config = json.loads(vm.call([docker, "compose", "--project-name", "fixture",
+                                         "--env-file", work / ".env", "-f", vm.ROOT / "deploy/compose/compose.yml",
+                                         "-f", work / "ingress.yml", "config", "--format", "json"],
+                                        code="GUEST_COMPOSE_CONFIG", env=env))
+        services = config["services"]
+        self.assertEqual([name for name, service in services.items()
+                          if "fixture-ingress" in service.get("networks", {})], ["reverse-proxy"])
+        self.assertTrue(config["networks"]["edge"]["internal"])
+        self.assertEqual(set(services["reverse-proxy"]["networks"]), {"edge", "fixture-ingress"})
+        port, = services["reverse-proxy"]["ports"]
+        self.assertEqual((port["host_ip"], port["published"], port["target"], port["protocol"]),
+                         ("127.0.0.1", "443", 8443, "tcp"))
 
     def test_fixture_env_declares_off_modes_and_only_synthetic_bindings(self):
         _, text = vm.fixture_environment(Path("/var/lib/isolated-fixture"), COMMIT, "fixture")

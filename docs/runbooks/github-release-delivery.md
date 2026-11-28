@@ -41,6 +41,8 @@ sudo scripts/ops/verify-release-delivery-vm.py \
 
 게스트는 Python 3.12 이상을 갖춘 전용 Linux/amd64 KVM 또는 QEMU VM이다. 호스팅 빌드는 운영 호스트와 같은 Docker containerd 이미지 저장소를 사용한다. 게스트에서도 같은 저장소를 사용해야 manifest의 로컬 이미지 ID를 대조할 수 있다. Git, Docker, Compose v2, zstd, curl, OpenSSL과 오프라인 증명을 검증할 수 있는 `/usr/bin/gh`를 설치한 뒤 외부 NIC와 호스트 공유 마운트를 분리한다. 첫 반입 전에 Docker 이미지·컨테이너·볼륨 목록이 모두 비어 있어야 한다.
 
+기본 Compose의 프록시는 내부 `edge`에만 연결된다. Docker는 내부 브리지만 있는 컨테이너의 호스트 포트를 열지 않는다. 검사기는 오프라인 게스트 안에서 프록시 하나에만 별도 브리지를 붙이고 `127.0.0.1:443`을 프록시의 `8443`에 연결한다. 실제 포트 바인딩과 네트워크를 대조한 뒤 게스트에서 시험 인증서를 검증하며 HTTPS `/healthz`에 접속한다. 운영 HTTPS 진입 경로는 운영 설치 인수 때 별도로 확인한다. [Docker 네트워크 동작 설명](https://github.com/moby/moby/discussions/53256)
+
 위 명령은 빈 출력 경로를 사용해 전송 목록의 서명·파일 해시를 오프라인에서 확인하고, 같은 릴리스를 두 번 반입하며 자원을 표본 측정한다. 이어 D8 증거와 V3 이미지 ID를 확인하고, 합성 설정으로 설치 계획과 Compose 사전검사를 실행하고, Paper OFF 상태의 DB·API·웹·프록시 기동 및 종료 결과를 확인한다. 게스트의 `GUEST_RESOURCE`에는 메모리·swap·파일시스템별 가용 공간의 시작값·최솟값·종료값이 남는다. 같은 시간대 호스트의 가용 메모리·swap·디스크와 기존 서비스 상태도 대조해 VM을 수일간 유지할 수 있는지 판정한다.
 
 운영 설치기의 `--apply`는 기존 `current`와 DB로 Paper 이력을 확인해야 하므로 빈 VM에서의 합성 기동 증거만으로 운영 설치 인수를 완료할 수 없다. 실제 비공개 원본을 사용하는 R5 네이티브 검증과 운영 배포는 [인계 문서](../handoffs/2026-11-26-github-release-delivery.md)에 정한 후속 단계다.
